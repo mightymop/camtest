@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <group android:checkableBehavior="single">
+        <item
+            android:id="@+id/action_quality_hd"
+            android:orderInCategory="200"
+            android:title="HD Quality"
+            android:checkable="true"
+            app:showAsAction="never" />
+    </group>
+    <item
+        android:id="@+id/action_reconnect"
+        android:orderInCategory="100"
+        android:title="Reconnect"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_app_access"
+        android:orderInCategory="100"
+        android:title="Send APP_ACCESS"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_date_time"
+        android:orderInCategory="100"
+        android:title="Send DATE_TIME"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_language"
+        android:orderInCategory="100"
+        android:title="Send LANGUAGE"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_keep_alive"
+        android:orderInCategory="100"
+        android:title="Send CTP_KEEP_ALIVE"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_video_param"
+        android:orderInCategory="100"
+        android:title="Send VIDEO_PARAM"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_video_ctrl"
+        android:orderInCategory="100"
+        android:title="Send VIDEO_CTRL"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_open_rt_stream"
+        android:orderInCategory="100"
+        android:title="Send OPEN_RT_STREAM"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_close_rt_stream"
+        android:orderInCategory="100"
+        android:title="Send CLOSE_RT_STREAM"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_close_connection"
+        android:orderInCategory="100"
+        android:title="Close Connection"
+        app:showAsAction="never" />
+
+</menu>
