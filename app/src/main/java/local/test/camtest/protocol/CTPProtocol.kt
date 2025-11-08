@@ -13,7 +13,7 @@ class CTPProtocol {
 
     companion object {
         private const val TAG = "CTPProtocol"
-        private const val HEADER = "CTP:"
+        private var HEADER = CTPCommand.CTP.command+":"
         private val HEADER_BYTES = HEADER.toByteArray()
         private const val MAX_PAYLOAD_SIZE = 5 * 1024 * 1024 // 5MB like Java version
     }
@@ -206,14 +206,14 @@ class CTPProtocol {
 
     private fun getSuffixForCommand(command: String): Byte {
         return when (command) {
-            "APP_ACCESS" -> 0x2f
-            "OPEN_RT_STREAM" -> 0x42
-            "CLOSE_RT_STREAM" -> 0x23
-            "VIDEO_PARAM" -> 0x00
-            "VIDEO_CTRL" -> 0x26
-            "DATE_TIME" -> 0x2e
-            "LANGUAGE" -> 0x23
-            "CTP_KEEP_ALIVE" -> 0x17
+            CTPCommand.APP_ACCESS.command -> 0x2f
+            CTPCommand.OPEN_RT_STREAM.command -> 0x42
+            CTPCommand.CLOSE_RT_STREAM.command -> 0x23
+            CTPCommand.VIDEO_PARAM.command -> 0x00
+            CTPCommand.VIDEO_CTRL.command -> 0x26
+            CTPCommand.DATE_TIME.command -> 0x2e
+            CTPCommand.LANGUAGE.command -> 0x23
+            CTPCommand.CTP_KEEP_ALIVE.command -> 0x17
             else -> 0x00
         }.toByte()
     }

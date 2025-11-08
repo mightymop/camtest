@@ -1,6 +1,7 @@
 package local.test.camtest.protocol
 
 enum class CTPCommand(val command: String) {
+    CTP("CTP"),
     APP_ACCESS("APP_ACCESS"),
     KEEP_ALIVE_INTERVAL("KEEP_ALIVE_INTERVAL"),
     SD_STATUS("SD_STATUS"),

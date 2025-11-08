@@ -9,11 +9,9 @@ import android.view.MenuItem
 import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
 import androidx.core.view.MenuProvider
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -55,16 +53,9 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        val homeViewModel =
-            ViewModelProvider(this).get(HomeViewModel::class.java)
 
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         val root: View = binding.root
-
-        val textView: TextView = binding.textHome
-        homeViewModel.text.observe(viewLifecycleOwner) {
-            textView.text = it
-        }
 
         binding.surfaceView.holder.addCallback(this)
         mjpegReceiver = JFIFMJpegStreamReceiver()
