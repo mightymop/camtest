@@ -1,6 +1,6 @@
 # Detailed UDP Payload Header Analysis
 # PCAP File: mjpeg_stream.pcap
-# Generated: 2025-11-09 03:30:44
+# Generated: 2025-11-09 15:31:44
 #========================================================================================================================
 
 Packet 1 - Size: 7360 bytes
@@ -25006,6 +25006,7 @@ Packet 2500 - Size: 7360 bytes
 
 ================================================== STATISTICS ==================================================
 Total Packets Analyzed: 2500
+Success Rate: 2500/2500 (100.0%)
 Unique Sequence Numbers: 834
 Sequence Range: 23228 - 24061
 Fragment Types: ['0x0000', '0x1c5c', '0x38b8']

@@ -219,7 +219,7 @@ class JFIFMJpegStreamReceiver {
             this.context = context
         }
 
-        private val DEBUGSAVEBITMAP = false
+        private var DEBUGSAVEBITMAP = false
 
         private val activeFrames = mutableMapOf<FrameKey, FrameAssembly>()
         private val frameTimeout = 1000L // 1 second timeout
