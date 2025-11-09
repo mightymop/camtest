@@ -1,432 +1,237 @@
-import dpkt
-import struct
-import socket
-from datetime import datetime
+#!/usr/bin/env python3
+# pcap_forwarder_scapy.py
+# Requirements: scapy (pip install scapy)
+#
+# Reads a PCAP, uses Scapy to decode frames (Ethernet / Radiotap/802.11),
+# reassembles IPv4 fragments, forwards UDP payloads to target IP:port,
+# and optionally writes reconstructed IP packets to ip_only.pcap.
+
 import sys
+import socket
+import time
+from collections import defaultdict
+from datetime import datetime, timezone
 
-def debug_print(message, level=1):
-    """Debug-Ausgaben mit Level-Steuerung"""
-    if level <= 2:  # Nur wichtige Meldungen anzeigen
-        print(message)
+from scapy.all import PcapReader, PcapWriter, IP, UDP, Raw, conf
 
-def extract_udp_payload(payload_bytes):
-    """Return payload if it contains UDP packet, else None."""
-    try:
-        ip = dpkt.ip.IP(payload_bytes)
-        if isinstance(ip.data, dpkt.udp.UDP):
-            debug_print(f"  ✅ Found UDP packet: {len(ip.data.data)} bytes payload", 2)
-            return bytes(ip.data.data)
-    except (dpkt.UnpackError, IndexError, Exception) as e:
-        debug_print(f"  ❌ IP/UDP parsing failed: {e}", 2)
+# ---------- config ----------
+DEFAULT_TARGET_IP = "192.168.1.20"
+DEFAULT_TARGET_PORT = 2224
+FRAGMENT_TIMEOUT_SEC = 60.0
+WRITE_IP_PCAP = True   # set False if you don't want a file
+VERBOSE = True
+# ----------------------------
+
+from scapy.all import RadioTap, Dot11, LLC, SNAP, IP, UDP, Raw
+
+def extract_ip_from_80211(pkt):
+    """Return IP packet from 802.11 frame, or None."""
+    if not pkt.haslayer(Dot11):
         return None
+    dot11 = pkt[Dot11]
+
+    # nur Data Frames
+    fc = dot11.FCfield
+    subtype = dot11.subtype
+    type_ = dot11.type
+    if type_ != 2:
+        return None
+
+    # LLC / SNAP abziehen
+    payload = dot11.payload
+    if payload.haslayer(LLC):
+        llc = payload[LLC]
+        if llc.haslayer(SNAP):
+            snap = llc[SNAP]
+            if snap.code == 0x0800:  # IPv4
+                return IP(bytes(snap.payload))
+    # manchmal Raw direkt IP
+    if payload.haslayer(IP):
+        return payload[IP]
     return None
-
-def extract_udp_from_wlan_improved(buf):
-    """Verbesserte WLAN-Verarbeitung mit verschiedenen Frame-Types"""
-    debug_print(f"🔍 Analyzing WLAN frame ({len(buf)} bytes)", 1)
     
-    if len(buf) < 4:
-        debug_print("  ❌ Buffer too short for Radiotap header", 1)
-        return None
+def now_ms():
+    return int(time.time() * 1000)
 
-    # Radiotap Header Länge
-    try:
-        radiotap_len = struct.unpack('<H', buf[2:4])[0]
-        debug_print(f"  Radiotap header length: {radiotap_len} bytes", 2)
-    except Exception as e:
-        debug_print(f"  ❌ Could not read Radiotap length: {e}", 1)
-        return None
+class FragmentBucket:
+    """Hold fragments for one (src,dst,id,proto)"""
+    def __init__(self, first_pkt):
+        self.parts = []  # list of (offset_bytes, bytes_payload, mf_flag)
+        self.first_pkt = first_pkt  # scapy IP object (header from first seen fragment)
+        self.last_seen = time.time()
 
-    if radiotap_len >= len(buf):
-        debug_print(f"  ❌ Radiotap length {radiotap_len} >= buffer length {len(buf)}", 1)
-        return None
+    def add(self, offset, data_bytes, mf):
+        self.parts.append((offset, data_bytes, mf))
+        self.last_seen = time.time()
 
-    # WLAN Frame nach Radiotap Header
-    wlan_frame = buf[radiotap_len:]
-    debug_print(f"  WLAN frame length: {len(wlan_frame)} bytes", 2)
-
-    if len(wlan_frame) < 2:
-        debug_print("  ❌ WLAN frame too short", 1)
-        return None
-
-    # Frame Control Field
-    frame_control = struct.unpack('<H', wlan_frame[0:2])[0]
-    frame_type = (frame_control >> 2) & 0x3
-    frame_subtype = (frame_control >> 4) & 0xF
-    to_ds = (frame_control & 0x0001) != 0
-    from_ds = (frame_control & 0x0002) != 0
-    
-    debug_print(f"  Frame Control: 0x{frame_control:04x}", 2)
-    debug_print(f"  Type: {frame_type}, Subtype: 0x{frame_subtype:x}, ToDS: {to_ds}, FromDS: {from_ds}", 2)
-
-    # Nur Data Frames verarbeiten (Type=2)
-    if frame_type != 2:
-        debug_print(f"  ❌ Not a data frame (type={frame_type})", 1)
-        return None
-
-    # WLAN Header Länge berechnen
-    # Basis-Header: FC(2) + Duration(2) + Addr1(6) + Addr2(6) + Addr3(6) + SeqCtrl(2) = 24 bytes
-    base_header_len = 24
-    addr4_present = (to_ds and from_ds)  # Beide DS flags gesetzt = 4 Adressen
-    
-    if addr4_present:
-        base_header_len += 6  # Addr4 hinzufügen
-    
-    # QoS Field (bei QoS Data Frames)
-    if frame_subtype in [0x08, 0x09, 0x0a, 0x0b]:  # QoS Data Frames
-        base_header_len += 2
-    
-    debug_print(f"  Calculated WLAN header length: {base_header_len} bytes", 2)
-
-    if len(wlan_frame) < base_header_len + 8: 
-        # + LLC/SNAP
-        debug_print(f"  ❌ WLAN frame too short for header+LLC", 1)
-        return None
-
-    # LLC/SNAP Header
-    llc_start = base_header_len
-    llc = wlan_frame[llc_start:llc_start+8]
-    
-    debug_print(f"  LLC/SNAP: {' '.join(f'{b:02x}' for b in llc)}", 2)
-    
-    # SNAP Header prüfen
-    if llc[0:3] != b'\xaa\xaa\x03':
-        debug_print(f"  ❌ Invalid SNAP header", 1)
-        # Versuche trotzdem IPv4 zu finden
-        debug_print(f"  Trying to find IP packet directly...", 2)
-        
-        # Suche nach IP Header (Version 4, IHL mindestens 5)
-        for offset in range(base_header_len, min(base_header_len + 50, len(wlan_frame) - 20)):
-            if wlan_frame[offset] >> 4 == 4:  # IPv4
-                debug_print(f"  Found IP packet at offset {offset}", 2)
-                ip_packet = wlan_frame[offset:]
-                return extract_udp_payload(ip_packet)
-        return None
-
-    # Ethernet Type im SNAP
-    eth_type = llc[6:8]
-    debug_print(f"  Ethernet Type: 0x{eth_type.hex()}", 2)
-
-    if eth_type != b'\x08\x00':  # IPv4
-        debug_print(f"  ❌ Not IPv4 (0x0800)", 1)
-        return None
-
-    # IP Packet startet nach LLC/SNAP
-    ip_start = llc_start + 8
-    ip_packet = wlan_frame[ip_start:]
-    
-    debug_print(f"  IP packet starts at offset {ip_start}, length: {len(ip_packet)} bytes", 2)
-    
-    return extract_udp_payload(ip_packet)
-
-def process_packet_improved(buf):
-    """Verbesserte Paketverarbeitung mit automatischer Format-Erkennung"""
-    # Ethernet case (direkt)
-    try:
-        eth = dpkt.ethernet.Ethernet(buf)
-        if isinstance(eth.data, dpkt.ip.IP) and isinstance(eth.data.data, dpkt.udp.UDP):
-            debug_print("✅ Found Ethernet + IP + UDP packet", 1)
-            return bytes(eth.data.data.data)
-    except (dpkt.UnpackError, IndexError, Exception) as e:
-        debug_print(f"Ethernet parsing failed: {e}", 2)
-
-    # WLAN/Radiotap case
-    return extract_udp_from_wlan_improved(buf)
-
-def check_pcap_format(pcap_file):
-    """Überprüft das tatsächliche Format der PCAP-Datei"""
-    print(f"\n🔍 Checking PCAP Format: {pcap_file}")
-    print("=" * 60)
-    
-    format_stats = {
-        'ethernet': 0,
-        'wlan_radiotap': 0,
-        'wlan_prism': 0,
-        'wlan_pcap': 0,
-        'other': 0,
-        'total': 0
-    }
-    
-    with open(pcap_file, 'rb') as f:
-        try:
-            pcap = dpkt.pcap.Reader(f)
-            
-            for i, (ts, buf) in enumerate(pcap):
-                if i >= 10:  # Nur erste 10 Pakete analysieren
-                    break
-                    
-                format_stats['total'] += 1
-                print(f"\n--- Packet {i+1} ---")
-                print(f"Timestamp: {ts}")
-                print(f"Length: {len(buf)} bytes")
-                
-                # Hex dump der ersten 32 Bytes
-                hex_dump = ' '.join(f'{b:02x}' for b in buf[:32])
-                print(f"Hex (first 32): {hex_dump}")
-                
-                # Format-Erkennung
-                if len(buf) >= 14:
-                    # Ethernet frame? (erste 12 Bytes MAC, dann EtherType)
-                    eth_type = buf[12:14]
-                    if eth_type in [b'\x08\x00', b'\x08\x06', b'\x86\xdd']:  # IPv4, ARP, IPv6
-                        format_stats['ethernet'] += 1
-                        print("📡 Format: Ethernet")
-                        continue
-                
-                if len(buf) >= 8:
-                    # Radiotap? (beginnt mit Version 0x00)
-                    if buf[0] == 0x00 and buf[1] == 0x00:
-                        format_stats['wlan_radiotap'] += 1
-                        print("📡 Format: WLAN with Radiotap header")
-                        continue
-                    
-                    # Prism header? (beginnt oft mit 0x44 oder 0x41)
-                    if buf[0] in [0x44, 0x41] and buf[1] == 0x00:
-                        format_stats['wlan_prism'] += 1
-                        print("📡 Format: WLAN with Prism header")
-                        continue
-                
-                # Plain WLAN pcap?
-                if len(buf) >= 24:
-                    frame_control = struct.unpack('<H', buf[0:2])[0] if len(buf) >= 2 else 0
-                    frame_type = (frame_control >> 2) & 0x3
-                    if frame_type in [0, 1, 2]:  # Management, Control, Data
-                        format_stats['wlan_pcap'] += 1
-                        print("📡 Format: Plain WLAN")
-                        continue
-                
-                format_stats['other'] += 1
-                print("📡 Format: Unknown")
-                
-        except Exception as e:
-            print(f"❌ Error reading PCAP: {e}")
+    def try_assemble(self):
+        """Return assembled payload bytes if complete, else None"""
+        # Need at least one part with mf==False (last fragment)
+        if not any(not p[2] for p in self.parts):
             return None
-    
-    print(f"\n📊 Format Statistics:")
-    print(f"   Ethernet: {format_stats['ethernet']}")
-    print(f"   WLAN Radiotap: {format_stats['wlan_radiotap']}")
-    print(f"   WLAN Prism: {format_stats['wlan_prism']}")
-    print(f"   WLAN Plain: {format_stats['wlan_pcap']}")
-    print(f"   Other: {format_stats['other']}")
-    print(f"   Total: {format_stats['total']}")
-    
-    return format_stats
 
-def analyze_headers_to_file(pcap_file, output_file, num_packets=0):
-    """Writes UDP Payload headers line by line to a file"""
-    print(f"\n📝 Writing UDP Headers to {output_file}")
-    
-    successful_packets = 0
-    total_packets = 0
+        # find overall size
+        max_end = 0
+        for off, data, mf in self.parts:
+            end = off + len(data)
+            if end > max_end:
+                max_end = end
 
-    with open(pcap_file, 'rb') as f:
-        pcap = dpkt.pcap.Reader(f)
-        with open(output_file, 'w') as out:
-            out.write("# UDP Payload Header Analysis\n")
-            out.write(f"# PCAP File: {pcap_file}\n")
-            out.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            out.write("# Format: PacketNumber | TotalSize | Magic/Type | Sequence | Timestamp | Fragment | Reserved | HasJPEG\n")
-            out.write("#" + "="*100 + "\n")
+        buf = bytearray(max_end)
+        present = [False] * max_end
+        for off, data, mf in self.parts:
+            buf[off:off+len(data)] = data
+            for i in range(off, off+len(data)):
+                present[i] = True
 
-            packet_count = 0
+        if not all(present):
+            return None
 
-            for ts, buf in pcap:
-                total_packets += 1
-                payload = process_packet_improved(buf)
-                if not payload:
-                    continue
-                    
-                if len(payload) < 20:
-                    debug_print(f"  ❌ Payload too short: {len(payload)} bytes", 2)
-                    continue
+        return bytes(buf)
 
-                successful_packets += 1
-                packet_count += 1
-                
-                magic_type = ' '.join(f'{b:02x}' for b in payload[0:4])
-                sequence = ' '.join(f'{b:02x}' for b in payload[4:6])
-                timestamp_field = ' '.join(f'{b:02x}' for b in payload[6:12])
-                fragment = ' '.join(f'{b:02x}' for b in payload[12:14])
-                reserved = ' '.join(f'{b:02x}' for b in payload[14:20])
-                has_jpeg = "YES" if b'\xff\xd8' in payload[20:100] else "NO"
+def fragment_key(ip_pkt):
+    return (ip_pkt.src, ip_pkt.dst, ip_pkt.id, ip_pkt.proto)
 
-                line = f"{packet_count:6d} | {len(payload):6d} | {magic_type:11} | {sequence:5} | {timestamp_field:17} | {fragment:5} | {reserved:17} | {has_jpeg:5}\n"
-                out.write(line)
+def is_fragment(ip_pkt):
+    # scapy uses flags (flags.MF) and frag
+    mf = bool(ip_pkt.flags.MF)
+    offset = int(ip_pkt.frag)  # in 8-byte units
+    return (mf or offset != 0)
 
-                if packet_count % 100 == 0:
-                    print(f"  Processed {packet_count} UDP packets...")
+def run(pcap_path, target_ip, target_port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-                if num_packets > 0 and packet_count >= num_packets:
-                    break
+    # fragment reassembly store
+    buckets = dict()  # key -> FragmentBucket
+    stats = {
+        'frames': 0,
+        'ip_seen': 0,
+        'udp_seen': 0,
+        'udp_forwarded': 0,
+        'assembled_ips': 0,
+        'written_ip_packets': 0
+    }
 
-    success_rate = (successful_packets / total_packets * 100) if total_packets > 0 else 0
-    print(f"✅ Completed! Wrote {packet_count} UDP payload headers to {output_file}")
-    print(f"📊 Success rate: {successful_packets}/{total_packets} packets ({success_rate:.1f}%)")
+    ip_pcap_writer = None
+    if WRITE_IP_PCAP:
+        ip_pcap_writer = PcapWriter("ip_only_reassembled.pcap", append=False, sync=True)
 
-def detailed_header_analysis(pcap_file, output_file, num_packets=50):
-    """Detailed header analysis with multiple views"""
-    print(f"\n📊 Detailed Header Analysis to {output_file}")
+    # stream through pcap
+    if VERBOSE:
+        print(f"[{datetime.now().isoformat()}] Opening {pcap_path} ... (Scapy v{conf.version})")
+    reader = PcapReader(pcap_path)
+    last_cleanup = time.time()
 
-    successful_packets = 0
-    total_packets = 0
+    for pkt in reader:
+        stats['frames'] += 1
 
-    with open(pcap_file, 'rb') as f:
-        pcap = dpkt.pcap.Reader(f)
-        with open(output_file, 'w') as out:
-            out.write("# Detailed UDP Payload Header Analysis\n")
-            out.write(f"# PCAP File: {pcap_file}\n")
-            out.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            out.write("#" + "="*120 + "\n\n")
+        # Scapy automatically decodes Radiotap/Dot11 -> IP if present
+        ip_pkt = None
+        if IP in pkt:
+            ip_pkt = pkt[IP]
+        else:
+            ip_pkt = extract_ip_from_80211(pkt)
+            # sometimes payload lives in Raw and ip not decoded; attempt decode
+            # but normally Scapy handles this, so skip
+          
+        stats['ip_seen'] += 1
 
-            packet_count = 0
-            sequence_patterns = []
-            fragment_patterns = []
+        # Fragment handling
+        if is_fragment(ip_pkt):
+            key = fragment_key(ip_pkt)
+            bucket = buckets.get(key)
+            if bucket is None:
+                bucket = FragmentBucket(ip_pkt)
+                buckets[key] = bucket
 
-            for ts, buf in pcap:
-                total_packets += 1
-                payload = process_packet_improved(buf)
-                if not payload or len(payload) < 20:
-                    continue
+            frag_offset_bytes = int(ip_pkt.frag) * 8
+            mf_flag = bool(ip_pkt.flags.MF)
+            # ip_pkt.payload is the transport payload or raw; get bytes
+            try:
+                payload_bytes = bytes(ip_pkt.payload)
+            except Exception:
+                payload_bytes = b''
 
-                successful_packets += 1
-                packet_count += 1
+            bucket.add(frag_offset_bytes, payload_bytes, mf_flag)
 
-                magic_type = payload[0:4]
-                sequence = payload[4:6]
-                timestamp_field = payload[6:12]
-                fragment = payload[12:14]
-                reserved = payload[14:20]
+            assembled_payload = bucket.try_assemble()
+            if assembled_payload is not None:
+                # create a synthetic full IP packet based on first header
+                base = bucket.first_pkt.copy()
+                base.remove_payload()  # remove old payload
+                base.len = 20 + len(assembled_payload)
+                base.flags = 0
+                base.frag = 0
+                base.chksum = None
+                # set payload to assembled bytes (as Raw so writer can serialize)
+                base.add_payload(Raw(assembled_payload))
 
+                # replace ip_pkt with assembled packet
+                ip_pkt = base
+                stats['assembled_ips'] += 1
+                # remove bucket
+                del buckets[key]
+
+        # now ip_pkt is either original (not fragmented) or assembled full IP
+        # check UDP
+        if UDP in ip_pkt:
+            stats['udp_seen'] += 1
+            udp_layer = ip_pkt[UDP]
+            try:
+                payload = bytes(udp_layer.payload)
+            except Exception:
+                payload = b''
+
+            if payload:
+                # forward
                 try:
-                    seq_num = struct.unpack('<H', sequence)[0]
-                    frag_num = struct.unpack('<H', fragment)[0]
-                    timestamp_float = struct.unpack('<f', timestamp_field[2:6])[0] if len(timestamp_field) >= 6 else 0.0
-                except:
-                    seq_num = 0
-                    frag_num = 0
-                    timestamp_float = 0.0
+                    sock.sendto(payload, (target_ip, int(target_port)))
+                    stats['udp_forwarded'] += 1
+                except Exception as e:
+                    print(f"[WARN] sendto failed: {e}")
 
-                sequence_patterns.append(seq_num)
-                fragment_patterns.append(frag_num)
+        # optionally write the IP packet (with UDP or any)
+        if ip_pcap_writer is not None:
+            try:
+                ip_pcap_writer.write(ip_pkt)
+                stats['written_ip_packets'] += 1
+            except Exception:
+                pass
 
-                out.write(f"Packet {packet_count} - Size: {len(payload)} bytes\n")
-                out.write(f"  Magic/Type:   {' '.join(f'{b:02x}' for b in magic_type)} (constant: {magic_type == b'\x02\x00\xac\x05'})\n")
-                out.write(f"  Sequence:     {' '.join(f'{b:02x}' for b in sequence)} = {seq_num} (0x{seq_num:04x})\n")
-                out.write(f"  Timestamp:    {' '.join(f'{b:02x}' for b in timestamp_field)} = {timestamp_float}\n")
-                out.write(f"  Fragment:     {' '.join(f'{b:02x}' for b in fragment)} = {frag_num} (0x{frag_num:04x})\n")
-                out.write(f"  Reserved:     {' '.join(f'{b:02x}' for b in reserved)}\n")
+        # periodic cleanup of old fragment buckets
+        if time.time() - last_cleanup > 5.0:
+            stale = []
+            now = time.time()
+            for k, b in buckets.items():
+                if now - b.last_seen > FRAGMENT_TIMEOUT_SEC:
+                    stale.append(k)
+            for k in stale:
+                del buckets[k]
+            last_cleanup = time.time()
 
-                payload_data = payload[20:min(30, len(payload))]
-                payload_hex = ' '.join(f'{b:02x}' for b in payload_data)
-                has_jpeg = "YES" if b'\xff\xd8' in payload[20:100] else "NO"
-                out.write(f"  Payload Start: {payload_hex}\n")
-                out.write(f"  Has JPEG:      {has_jpeg}\n")
-                out.write("-" * 80 + "\n\n")
+        # progress print
+        if VERBOSE and stats['frames'] % 1000 == 0:
+            print(f"[{stats['frames']}] frames processed - IP:{stats['ip_seen']}, UDP seen:{stats['udp_seen']}, forwarded:{stats['udp_forwarded']}, assembled:{stats['assembled_ips']}")
 
-                if packet_count % 10 == 0:
-                    print(f"  Processed {packet_count} packets...")
+    reader.close()
+    if ip_pcap_writer:
+        ip_pcap_writer.close()
 
-                if num_packets > 0 and packet_count >= num_packets:
-                    break
+    print("=== Done ===")
+    print(f"Frames processed: {stats['frames']}")
+    print(f"IP packets seen:  {stats['ip_seen']}")
+    print(f"UDP packets seen: {stats['udp_seen']}")
+    print(f"UDP forwarded:   {stats['udp_forwarded']}")
+    print(f"IP assembled:     {stats['assembled_ips']}")
+    print(f"IP written:       {stats['written_ip_packets']} (ip_only_reassembled.pcap)")
+    return stats
 
-            # Statistics
-            success_rate = (successful_packets / total_packets * 100) if total_packets > 0 else 0
-            out.write("\n" + "="*50 + " STATISTICS " + "="*50 + "\n")
-            out.write(f"Total Packets Analyzed: {packet_count}\n")
-            out.write(f"Success Rate: {successful_packets}/{total_packets} ({success_rate:.1f}%)\n")
-            
-            if sequence_patterns:
-                unique_sequences = len(set(sequence_patterns))
-                out.write(f"Unique Sequence Numbers: {unique_sequences}\n")
-                out.write(f"Sequence Range: {min(sequence_patterns)} - {max(sequence_patterns)}\n")
-            if fragment_patterns:
-                fragment_types = set(fragment_patterns)
-                out.write(f"Fragment Types: {[f'0x{ft:04x}' for ft in fragment_types]}\n")
-                for ft in fragment_types:
-                    count = fragment_patterns.count(ft)
-                    percentage = (count / len(fragment_patterns)) * 100
-                    out.write(f"  0x{ft:04x}: {count} packets ({percentage:.1f}%)\n")
-
-    print(f"✅ Detailed analysis completed! Wrote {packet_count} packets to {output_file}")
-
-def create_csv_analysis(pcap_file, output_file, num_packets=0):
-    """Creates CSV format for easy analysis"""
-    print(f"\n📈 Creating CSV Analysis: {output_file}")
-
-    successful_packets = 0
-    total_packets = 0
-
-    with open(pcap_file, 'rb') as f:
-        pcap = dpkt.pcap.Reader(f)
-        with open(output_file, 'w') as out:
-            out.write("PacketNumber,TotalSize,MagicByte,StreamID,SequenceNum,FragmentType,Timestamp,HasJPEG,PayloadStart\n")
-            packet_count = 0
-
-            for ts, buf in pcap:
-                total_packets += 1
-                payload = process_packet_improved(buf)
-                if not payload or len(payload) < 20:
-                    continue
-
-                successful_packets += 1
-                packet_count += 1
-
-                try:
-                    magic_byte = payload[0]
-                    stream_id = struct.unpack('<H', payload[2:4])[0]
-                    sequence_num = struct.unpack('<H', payload[4:6])[0]
-                    fragment_type = struct.unpack('<H', payload[12:14])[0]
-                    timestamp_float = struct.unpack('<f', payload[8:12])[0] if len(payload) >= 12 else 0.0
-                    has_jpeg = "1" if b'\xff\xd8' in payload[20:100] else "0"
-                    payload_start = ' '.join(f'{b:02x}' for b in payload[20:25])
-                except:
-                    continue
-
-                line = f"{packet_count},{len(payload)},{magic_byte},{stream_id},{sequence_num},{fragment_type},{timestamp_float:.2f},{has_jpeg},\"{payload_start}\"\n"
-                out.write(line)
-
-                if packet_count % 100 == 0:
-                    print(f"  Processed {packet_count} packets...")
-
-                if num_packets > 0 and packet_count >= num_packets:
-                    break
-
-    success_rate = (successful_packets / total_packets * 100) if total_packets > 0 else 0
-    print(f"✅ CSV analysis completed! Wrote {packet_count} packets to {output_file}")
-    print(f"📊 Success rate: {successful_packets}/{total_packets} packets ({success_rate:.1f}%)")
-
-if __name__ == "__main__":
-    pcap_file = "mjpeg_stream.pcap"
-    
-    print("🚀 Starting WLAN UDP Payload Analyzer")
-    print("=" * 50)
-    
-    # 1. Zuerst das Format überprüfen
-    format_stats = check_pcap_format(pcap_file)
-    
-    if format_stats is None:
-        print("❌ Could not read PCAP file. Exiting.")
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("Usage: python3 pcap_forwarder_scapy.py <pcap_file> [target_ip] [target_port]")
         sys.exit(1)
-    
-    # 2. Analysen durchführen
-    print("\n" + "=" * 50)
-    print("Starting analyses...")
-    
-    # 1. Simple header overview
-    analyze_headers_to_file(pcap_file, "udp_headers_overview.txt", num_packets=2500)
+    pcap_file = sys.argv[1]
+    target_ip = sys.argv[2] if len(sys.argv) >= 3 else DEFAULT_TARGET_IP
+    target_port = int(sys.argv[3]) if len(sys.argv) >= 4 else DEFAULT_TARGET_PORT
 
-    # 2. Detailed analysis
-    detailed_header_analysis(pcap_file, "udp_headers_detailed.txt", num_packets=2500)
-
-    # 3. CSV for data analysis
-    create_csv_analysis(pcap_file, "udp_headers_analysis.csv", num_packets=2500)
-
-    print("\n🎉 All analyses completed!")
-    print("📁 Files created:")
-    print("   - udp_headers_overview.txt (tabular overview)")
-    print("   - udp_headers_detailed.txt (detailed analysis)")
-    print("   - udp_headers_analysis.csv (CSV for data analysis)")
-    print("\n💡 If no UDP packets were found, check:")
-    print("   - PCAP file format (see above analysis)")
-    print("   - WLAN encryption (script only works with unencrypted traffic)")
-    print("   - Network configuration and capture settings")
+    run(pcap_file, target_ip, target_port)

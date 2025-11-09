@@ -11,7 +11,13 @@
         <item
             android:id="@+id/action_udp_pcap_dump"
             android:orderInCategory="200"
-            android:title="SAVE UDP PCAP DUMP"
+            android:title="Dump to PCAP"
+            android:checkable="true"
+            app:showAsAction="never" />
+        <item
+            android:id="@+id/action_udp_pcapplayer"
+            android:orderInCategory="200"
+            android:title="Only UDP Receiver"
             android:checkable="true"
             app:showAsAction="never" />
     </group>

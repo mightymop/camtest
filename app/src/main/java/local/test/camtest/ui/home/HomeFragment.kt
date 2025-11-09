@@ -47,6 +47,9 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
 
     private var use_hd: Boolean = false
     private var use_dump: Boolean = false
+
+    private var use_pcapplayer: Boolean = false
+
     private var logCount = 0
 
     override fun onCreateView(
@@ -86,6 +89,12 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                         menuItem.isChecked = !menuItem.isChecked
                         // HD Qualität auswählen
                         use_dump = !use_dump
+                        true
+                    }
+                    R.id.action_udp_pcapplayer -> {
+                        menuItem.isChecked = !menuItem.isChecked
+                        // HD Qualität auswählen
+                        use_pcapplayer = !use_pcapplayer
                         true
                     }
 
@@ -191,35 +200,42 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                         mjpegReceiver.stopStream()
                         mjpegReceiver.startStream(use_dump)
 
-                        val h: Int = if (use_hd) {
-                            resources.getInteger(R.integer.hd_height)
-                        } else {
-                            resources.getInteger(R.integer.sd_height)
+                        if (!use_pcapplayer)
+                        {
+                            val h: Int = if (use_hd) {
+                                resources.getInteger(R.integer.hd_height)
+                            } else {
+                                resources.getInteger(R.integer.sd_height)
+                            }
+                            val w: Int = if (use_hd) {
+                                resources.getInteger(R.integer.hd_width)
+                            } else {
+                                resources.getInteger(R.integer.sd_width)
+                            }
+
+                            val bytePacket = protocol.buildPacket(
+                                CTPCommand.OPEN_RT_STREAM.command,
+                                "PUT",
+                                mapOf(
+                                    "w" to w.toString(),
+                                    "h" to h.toString(),
+                                    "format" to "0",
+                                    "fps" to resources.getInteger(R.integer.frames).toString()
+                                )
+                            )
+                            sendCommand(bytePacket)
                         }
-                        val w: Int = if (use_hd) {
-                            resources.getInteger(R.integer.hd_width)
-                        } else {
-                            resources.getInteger(R.integer.sd_width)
+                        else
+                        {
+                            //Simply listen on udp:2224 for debugging purposes
                         }
 
-                        val bytePacket = protocol.buildPacket(
-                            CTPCommand.OPEN_RT_STREAM.command,
-                            "PUT",
-                            mapOf(
-                                "w" to w.toString(),
-                                "h" to h.toString(),
-                                "format" to "0",
-                                "fps" to resources.getInteger(R.integer.frames).toString()
-                            )
-                        )
-                        sendCommand(bytePacket)
                         true
                     }
 
                     R.id.action_close_rt_stream -> {
 
                         mjpegReceiver.stopStream()
-
 
                         val bytePacket = protocol.buildPacket(
                             CTPCommand.CLOSE_RT_STREAM.command,
@@ -401,7 +417,6 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
 
         mjpegReceiver.stopStream()
         mjpegReceiver.release()
-
         _binding = null
     }
 
