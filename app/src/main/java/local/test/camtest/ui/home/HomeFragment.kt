@@ -46,6 +46,7 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
     private var input: InputStream? = null
 
     private var use_hd: Boolean = false
+    private var use_dump: Boolean = false
     private var logCount = 0
 
     override fun onCreateView(
@@ -68,6 +69,7 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
             override fun onPrepareMenu(menu: Menu) {
                 // Checkbox-Status setzen
                 menu.findItem(R.id.action_quality_hd)?.isChecked = use_hd
+                menu.findItem(R.id.action_udp_pcap_dump)?.isChecked = use_dump
             }
 
             override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
@@ -77,7 +79,13 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                     R.id.action_quality_hd -> {
                         menuItem.isChecked = !menuItem.isChecked
                         // HD Qualität auswählen
-                        use_hd = menuItem.isChecked
+                        use_hd = !use_hd
+                        true
+                    }
+                    R.id.action_udp_pcap_dump -> {
+                        menuItem.isChecked = !menuItem.isChecked
+                        // HD Qualität auswählen
+                        use_dump = !use_dump
                         true
                     }
 
@@ -181,7 +189,7 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                     R.id.action_open_rt_stream -> {
 
                         mjpegReceiver.stopStream()
-                        mjpegReceiver.startStream()
+                        mjpegReceiver.startStream(use_dump)
 
                         val h: Int = if (use_hd) {
                             resources.getInteger(R.integer.hd_height)
@@ -271,6 +279,14 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
 
             override fun onStreamInfo(info: String) {
                 log(info)
+            }
+
+            override fun onPcapDumpStarted(filePath: String) {
+                log("capturing to file: "+filePath)
+            }
+
+            override fun onPcapDumpStopped(filePath: String, packetCount: Int) {
+                log(filePath+" created, captured: "+packetCount.toString()+" packets")
             }
         },requireContext())
 

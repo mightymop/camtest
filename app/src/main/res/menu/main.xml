@@ -8,6 +8,12 @@
             android:title="HD Quality"
             android:checkable="true"
             app:showAsAction="never" />
+        <item
+            android:id="@+id/action_udp_pcap_dump"
+            android:orderInCategory="200"
+            android:title="SAVE UDP PCAP DUMP"
+            android:checkable="true"
+            app:showAsAction="never" />
     </group>
     <item
         android:id="@+id/action_reconnect"
