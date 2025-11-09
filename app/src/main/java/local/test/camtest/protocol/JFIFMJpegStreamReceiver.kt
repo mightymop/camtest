@@ -251,7 +251,7 @@ class JFIFMJpegStreamReceiver {
 
             // Check if frame is complete
             if (isFrameComplete(frameAssembly)) {
-                val frameData = assembleFrame(frameAssembly)
+                val frameData = assembleJpegFrame(frameAssembly.fragments)
                 activeFrames.remove(frameKey)
                 return frameData
             }
@@ -272,19 +272,8 @@ class JFIFMJpegStreamReceiver {
             }
 
             // Try to assemble frame and check if it's a valid JPEG
-            val assembledFrame = tryAssembleFrame(fragments)
+            val assembledFrame = assembleJpegFrame(fragments)
             return isValidJpegFrame(assembledFrame)
-        }
-
-        private fun tryAssembleFrame(fragments: Map<Int, ByteArray>): ByteArray {
-            val sortedFragments = fragments.entries.sortedBy { it.key }
-            val buffer = ByteArrayOutputStream()
-
-            for ((offset, fragmentData) in sortedFragments) {
-                buffer.write(fragmentData)
-            }
-
-            return buffer.toByteArray()
         }
 
         private fun isValidJpegFrame(data: ByteArray): Boolean {
@@ -324,6 +313,15 @@ class JFIFMJpegStreamReceiver {
             return true
         }
 
+        private fun trimToEOF(data: ByteArray): ByteArray {
+            for (i in 0 until data.size - 1) {
+                if (data[i] == 0xFF.toByte() && data[i + 1] == 0xD9.toByte()) {
+                    return data.copyOfRange(0, i + 2) // everything up to FF D9
+                }
+            }
+            return data // return unchanged if EOF missing
+        }
+
         private fun hasSOIMarker(data: ByteArray): Boolean {
             // Check if SOI marker exists anywhere in the data
             for (i in 0 until data.size - 1) {
@@ -344,32 +342,24 @@ class JFIFMJpegStreamReceiver {
             return false
         }
 
-        private fun assembleFrame(frame: FrameAssembly): ByteArray {
-            val sortedFragments = frame.fragments.entries.sortedBy { it.key }
-            val buffer = ByteArrayOutputStream()
-            var currentPosition = 0
+        private fun assembleJpegFrame(fragments: Map<Int, ByteArray>): ByteArray {
+            if (fragments.isEmpty()) return ByteArray(0)
 
-            for ((offset, fragmentData) in sortedFragments) {
-                // Fill gap if necessary
-                if (offset > currentPosition) {
-                    val gapSize = offset - currentPosition
-                    Log.w(
-                        "RTP",
-                        "Filling gap: ${currentPosition.toString(16)}->${offset.toString(16)} (${gapSize} bytes)"
-                    )
-                    buffer.write(ByteArray(gapSize))
-                }
+            val sorted = fragments.toSortedMap()
 
-                buffer.write(fragmentData)
-                currentPosition = offset + fragmentData.size
+            val lastOffset = sorted.keys.last()
+            val lastSize = sorted[lastOffset]!!.size
+            val totalSize = lastOffset + lastSize
+
+            val buffer = ByteArray(totalSize)
+
+            for ((offset, fragment) in sorted) {
+                System.arraycopy(fragment, 0, buffer, offset, fragment.size)
             }
 
-            val frameData = buffer.toByteArray()
-            Log.d(
-                "RTP",
-                "Frame assembled: ${frameData.size} bytes from ${sortedFragments.size} fragments"
-            )
-            return frameData
+            val result = trimToEOF(buffer)
+
+            return result
         }
 
         private fun cleanupOldFrames() {
@@ -413,19 +403,4 @@ class JFIFMJpegStreamReceiver {
     }
 
     data class RTPInfo(val frameId: Int, val timestamp: Int, val fragmentOffset: Int)
-}
-
-// These classes are defined outside but kept for reference
-data class Fragment(
-    val offset: Int,
-    val payload: ByteArray,
-    val type: FragmentType
-)
-
-enum class FragmentType {
-    START,          // Fragment with FRAG_START offset
-    START_SOI,      // Fragment with SOI marker (could be middle fragment)
-    MIDDLE,         // Middle fragment
-    END,            // Fragment with FRAG_END offset
-    END_EOF         // Fragment with EOF marker (could be middle fragment)
 }
