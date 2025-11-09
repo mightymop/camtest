@@ -11,6 +11,7 @@ import android.view.SurfaceHolder
 import local.test.camtest.R
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -18,6 +19,7 @@ import java.net.SocketTimeoutException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.io.use
 import kotlin.math.min
 
 class JFIFMJpegStreamReceiver {
@@ -42,7 +44,7 @@ class JFIFMJpegStreamReceiver {
     private var pcapFile: RandomAccessFile? = null
     private var pcapPacketCount = 0
 
-    private val frameAssembler = RTPFrameAssembler()
+    private var frameAssembler : RTPFrameAssembler? = null
 
     private lateinit var context: Context
 
@@ -54,6 +56,7 @@ class JFIFMJpegStreamReceiver {
         this.surfaceHolder = holder
         this.listener = listener
         this.context = context
+        this.frameAssembler = RTPFrameAssembler(context)
         paint.isFilterBitmap = true
         paint.isAntiAlias = false
 
@@ -94,7 +97,7 @@ class JFIFMJpegStreamReceiver {
                             packet.port
                         )
 
-                        val frameData = frameAssembler.processPacket(data)
+                        val frameData = frameAssembler?.processPacket(data)
                         if (frameData != null) {
                             frameCount++
                             val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size)
@@ -212,8 +215,16 @@ class JFIFMJpegStreamReceiver {
     // ------------------- Frame Assembler -------------------
     class RTPFrameAssembler {
 
+        constructor(context: Context) {
+            this.context = context
+        }
+
+        private val DEBUGSAVEBITMAP = false
+
         private val activeFrames = mutableMapOf<FrameKey, FrameAssembly>()
         private val frameTimeout = 1000L // 1 second timeout
+
+        private var context: Context
 
         data class FrameKey(val frameId: Int, val timestamp: Int)
 
@@ -252,6 +263,12 @@ class JFIFMJpegStreamReceiver {
             // Check if frame is complete
             if (isFrameComplete(frameAssembly)) {
                 val frameData = assembleJpegFrame(frameAssembly.fragments)
+                if (DEBUGSAVEBITMAP) {
+                    val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size)
+                    if (bitmap != null) {
+                        saveDebugBitmap(bitmap) //only for debugging
+                    }
+                }
                 activeFrames.remove(frameKey)
                 return frameData
             }
@@ -273,7 +290,41 @@ class JFIFMJpegStreamReceiver {
 
             // Try to assemble frame and check if it's a valid JPEG
             val assembledFrame = assembleJpegFrame(fragments)
+
             return isValidJpegFrame(assembledFrame)
+        }
+
+        private fun saveDebugBitmap(bitmap: Bitmap) {
+            val file = File(context.getExternalFilesDir(null), "debug_${System.currentTimeMillis()}.jpg")
+            try {
+                FileOutputStream(file).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                }
+                Log.d("DEBUG", "Saved bitmap: ${file.absolutePath}")
+            } catch (e: Exception) {
+                Log.e("DEBUG", "Save failed: ${e.message}")
+            }
+        }
+        private fun countQuantizationTables(data: ByteArray): Int {
+            var count = 0
+            var i = 0
+            while (i < data.size - 1) {
+                if (data[i] == 0xFF.toByte() && data[i + 1] == 0xDB.toByte()) {
+                    count++
+                }
+                i++
+            }
+            return count
+        }
+
+        private fun containsRestartMarkers(data: ByteArray): Boolean {
+            for (i in 0 until data.size - 1) {
+                if (data[i] == 0xFF.toByte()) {
+                    val b = data[i+1].toInt() and 0xFF
+                    if (b in 0xD0..0xD7) return true
+                }
+            }
+            return false
         }
 
         private fun isValidJpegFrame(data: ByteArray): Boolean {
@@ -306,9 +357,12 @@ class JFIFMJpegStreamReceiver {
                 return false
             }
 
+            val testHasRST =  containsRestartMarkers(data)
+            val testCountDQT = countQuantizationTables(data)
+
             Log.d(
                 "JPEG",
-                "Valid JPEG: ${data.size} bytes, SOI at start: $soiAtStart, EOF at end: $eofAtEnd"
+                "Valid JPEG: ${data.size} bytes, SOI at start: $soiAtStart, EOF at end: $eofAtEnd, hasRST= $testHasRST, count DQT=$testCountDQT"
             )
             return true
         }
@@ -357,9 +411,29 @@ class JFIFMJpegStreamReceiver {
                 System.arraycopy(fragment, 0, buffer, offset, fragment.size)
             }
 
-            val result = trimToEOF(buffer)
+            var result = trimToEOF(buffer)
+
+            if (!containsRestartMarkers(result)) {
+               // result = insertFakeRSTMarkers(result) //produces gray parts
+            }
 
             return result
+        }
+
+        private fun insertFakeRSTMarkers(data: ByteArray): ByteArray {
+            val output = ByteArrayOutputStream()
+            var i = 0
+            var rstNumber = 0
+            while (i < data.size) {
+                output.write(data[i].toInt())
+                if (i > 0 && i % 4096 == 0) { // grob: 4096 Bytes ~ 64 MCUs bei 8x8 Blöcken
+                    output.write(0xFF)
+                    output.write(0xD0 + (rstNumber % 8))
+                    rstNumber++
+                }
+                i++
+            }
+            return output.toByteArray()
         }
 
         private fun cleanupOldFrames() {
