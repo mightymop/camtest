@@ -251,7 +251,7 @@ def analyze_headers_to_file(pcap_file, output_file, num_packets=0):
                 reserved = ' '.join(f'{b:02x}' for b in payload[14:20])
                 has_jpeg = "YES" if b'\xff\xd8' in payload[20:100] else "NO"
 
-                line = f"{packet_count:6d} | {len(payload):6d} ||| {magic_type:11} | {sequence:11} | {frametick:11} | {fragment:5} | {reserved:17} ||| {has_jpeg:5}\n"
+                line = f"{packet_count:6d} | {len(payload[20:]):6d} ||| {magic_type:11} | {sequence:11} | {frametick:11} | {fragment:5} | {reserved:17} ||| {has_jpeg:5}\n"
                 out.write(line)
 
                 if packet_count % 100 == 0:
@@ -310,7 +310,7 @@ def detailed_header_analysis(pcap_file, output_file, num_packets=50):
                 sequence_patterns.append(seq_num)
                 fragment_patterns.append(frag_num)
 
-                out.write(f"Packet {packet_count} - Size: {len(payload)} bytes\n")
+                out.write(f"Packet {packet_count} - Size: {len(payload[20:])} bytes\n")
                 out.write(f"  Magic/Type:   {' '.join(f'{b:02x}' for b in magic_type)} (constant: {magic_type == b'\x02\x00\xac\x05'})\n")
                 out.write(f"  Sequence:     {' '.join(f'{b:02x}' for b in sequence)} = {seq_num} (0x{seq_num:04x})\n")
                 out.write(f"  Frametick:    {' '.join(f'{b:02x}' for b in frametick)} = {unknown_float}\n")

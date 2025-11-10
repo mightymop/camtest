@@ -174,6 +174,7 @@ class JFIFMJpegStreamReceiver {
                 inPreferredConfig = Bitmap.Config.RGB_565
                 inMutable = true // Verhindert Hardware Bitmaps
                 inSampleSize = 1
+                inJustDecodeBounds = false
             }
 
             while (isReceiving.get()) {
@@ -565,6 +566,7 @@ class JFIFMJpegStreamReceiver {
 
         private fun isFrameComplete(frame: FrameAssembly): Boolean {
             val fragments = frame.fragments
+
             return fragments.values.any { hasSOIMarker(it) } &&
                     fragments.values.any { hasEOFMarker(it) } &&
                     isValidJpegFrame(assembleJpegFrame(fragments))
@@ -587,6 +589,11 @@ class JFIFMJpegStreamReceiver {
 
             for ((offset, fragment) in sorted) {
                 System.arraycopy(fragment, 0, buffer, offset, fragment.size)
+            }
+
+            for ((offset, fragment) in fragments.toSortedMap()) {
+                val hexString = fragment.joinToString(" ") { String.format("%02X", it) }
+                Log.d(TAG, "Fragment at offset $offset (${fragment.size} bytes): $hexString")
             }
 
             return trimToEOF(buffer)
