@@ -630,15 +630,26 @@ class JFIFMJpegStreamReceiver {
         private fun parseRTPHeader(data: ByteArray): RTPInfo? {
             if (data.size < 20) return null
             return try {
-                val frameId = ((data[4].toInt() and 0xFF) shl 8) or (data[5].toInt() and 0xFF)
-                val timestamp = ((data[6].toInt() and 0xFF) shl 24) or
-                        ((data[7].toInt() and 0xFF) shl 16) or
-                        ((data[8].toInt() and 0xFF) shl 8) or
-                        (data[9].toInt() and 0xFF)
-                val fragmentOffset = ((data[12].toInt() and 0xFF) shl 8) or (data[13].toInt() and 0xFF)
+                // 4-Byte Sequence (Little Endian)
+                val frameId =  (data[4].toInt() and 0xFF)        or
+                        ((data[5].toInt() and 0xFF) shl 8) or
+                        ((data[6].toInt() and 0xFF) shl 16) or
+                        ((data[7].toInt() and 0xFF) shl 24)
+
+                // 4-Byte Timestamp (Little Endian)
+                val timestamp =  (data[8].toInt() and 0xFF)        or
+                        ((data[9].toInt() and 0xFF) shl 8) or
+                        ((data[10].toInt() and 0xFF) shl 16) or
+                        ((data[11].toInt() and 0xFF) shl 24)
+
+                // 2-Byte Fragment Offset (Little Endian)
+                val fragmentOffset = (data[12].toInt() and 0xFF) or
+                        ((data[13].toInt() and 0xFF) shl 8)
+
                 RTPInfo(frameId, timestamp, fragmentOffset)
+
             } catch (e: Exception) {
-                Log.e(TAG, "Error while parsing custom RTP Header ${e.message}")
+                Log.e(TAG, "Error while parsing custom RTP Header: ${e.message}")
                 null
             }
         }
