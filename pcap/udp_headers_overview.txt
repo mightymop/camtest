@@ -1,6 +1,6 @@
 # UDP Payload Header Analysis
 # PCAP File: mjpeg_stream.pcap
-# Generated: 2025-11-09 19:24:08
+# Generated: 2025-11-10 03:31:26
 # Format: PacketNumber | TotalSize | Magic/Type | Sequence | Timestamp | Fragment | Reserved | HasJPEG
 #====================================================================================================
      1 |   7360 | 02 00 ac 05 | bc 5a | 00 00 f8 43 00 00 | 00 00 | 00 00 00 00 00 00 | YES  

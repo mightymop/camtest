@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.net.SocketException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -106,7 +107,7 @@ class CTPProtocol {
 
                     if (receiveErrorTime > 5) {
                         Log.w(TAG, "Too many receive errors, stopping")
-                        break
+                        throw SocketException("Too many receive errors, stopping")
                     }
 
                     kotlinx.coroutines.delay(1000L) // Wait before retry

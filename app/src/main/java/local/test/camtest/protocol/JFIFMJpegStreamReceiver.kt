@@ -6,9 +6,11 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.media.ExifInterface
 import android.util.Log
 import android.view.SurfaceHolder
 import local.test.camtest.R
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.DatagramPacket
@@ -56,6 +58,8 @@ class JFIFMJpegStreamReceiver {
     private var pcapDumpEnabled: Boolean = false
     private var pcapFile: RandomAccessFile? = null
     private var pcapPacketCount = 0
+
+    private val DEBUG = false
 
     companion object {
         private const val TAG = "JFIFMJpegStreamReceiver"
@@ -167,7 +171,9 @@ class JFIFMJpegStreamReceiver {
 
             // Pre-allocated objects to reduce GC
             val options = BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.RGB_565 // Weniger Memory
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inMutable = true // Verhindert Hardware Bitmaps
+                inSampleSize = 1
             }
 
             while (isReceiving.get()) {
@@ -386,6 +392,9 @@ class JFIFMJpegStreamReceiver {
             // Schnellere Bitmap Decodierung
             val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size, options)
             if (bitmap != null) {
+                if (DEBUG) {
+                    decodeAndLogExif(frameData)
+                }
                 drawToSurfaceOptimized(bitmap)
                 listener?.onFrameDecoded(bitmap.width, bitmap.height)
                 bitmap.recycle() // Memory sofort freigeben
@@ -394,6 +403,37 @@ class JFIFMJpegStreamReceiver {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Frame decode error: ${e.message}")
+        }
+    }
+
+    fun decodeAndLogExif(frameData: ByteArray) {
+        val options = BitmapFactory.Options()
+        val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size, options)
+
+        if (bitmap != null) {
+            // --- EXIF AUSLESEN ---
+            try {
+                val exif = ExifInterface(ByteArrayInputStream(frameData))
+
+                val tags = ExifInterface::class.java.fields
+                    .filter { it.name.startsWith("TAG_") }
+                    .mapNotNull { it.get(null) as? String }
+
+                for (tag in tags) {
+                    val value = exif.getAttribute(tag)
+                    if (value != null) {
+                        Log.d("EXIF", "$tag = $value")
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e("EXIF", "EXIF reading failed", e)
+            }
+
+            // --- DEIN BESTEHENDER CODE ---
+            drawToSurfaceOptimized(bitmap)
+            listener?.onFrameDecoded(bitmap.width, bitmap.height)
+            bitmap.recycle()
         }
     }
 
@@ -605,4 +645,5 @@ class JFIFMJpegStreamReceiver {
     }
 
     data class RTPInfo(val frameId: Int, val timestamp: Int, val fragmentOffset: Int)
+
 }
