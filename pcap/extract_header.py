@@ -152,12 +152,12 @@ def check_pcap_format(pcap_file):
             pcap = dpkt.pcap.Reader(f)
             
             for i, (ts, buf) in enumerate(pcap):
-                if i >= 10:  # Nur erste 10 Pakete analysieren
+                if i >= 100:  # Nur erste 10 Pakete analysieren
                     break
                     
                 format_stats['total'] += 1
                 print(f"\n--- Packet {i+1} ---")
-                print(f"Timestamp: {ts}")
+                print(f"Frametick: {ts}")
                 print(f"Length: {len(buf)} bytes")
                 
                 # Hex dump der ersten 32 Bytes
@@ -225,7 +225,8 @@ def analyze_headers_to_file(pcap_file, output_file, num_packets=0):
             out.write("# UDP Payload Header Analysis\n")
             out.write(f"# PCAP File: {pcap_file}\n")
             out.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            out.write("# Format: PacketNumber | TotalSize | Magic/Type | Sequence | Timestamp | Fragment | Reserved | HasJPEG\n")
+            out.write("# Format: PacketNumber | TotalSize ||| Magic/Type | Sequence | Frametick  | Fragment | Reserved ||| HasJPEG\n")
+            out.write("#                        CALCULATED||| ---------------- RTP HEADER BYTES ---------------------- ||| PAYLOAD\n")
             out.write("#" + "="*100 + "\n")
 
             packet_count = 0
@@ -244,13 +245,13 @@ def analyze_headers_to_file(pcap_file, output_file, num_packets=0):
                 packet_count += 1
                 
                 magic_type = ' '.join(f'{b:02x}' for b in payload[0:4])
-                sequence = ' '.join(f'{b:02x}' for b in payload[4:6])
-                timestamp_field = ' '.join(f'{b:02x}' for b in payload[6:12])
+                sequence = ' '.join(f'{b:02x}' for b in payload[4:8])
+                frametick = ' '.join(f'{b:02x}' for b in payload[8:12])
                 fragment = ' '.join(f'{b:02x}' for b in payload[12:14])
                 reserved = ' '.join(f'{b:02x}' for b in payload[14:20])
                 has_jpeg = "YES" if b'\xff\xd8' in payload[20:100] else "NO"
 
-                line = f"{packet_count:6d} | {len(payload):6d} | {magic_type:11} | {sequence:5} | {timestamp_field:17} | {fragment:5} | {reserved:17} | {has_jpeg:5}\n"
+                line = f"{packet_count:6d} | {len(payload):6d} ||| {magic_type:11} | {sequence:11} | {frametick:11} | {fragment:5} | {reserved:17} ||| {has_jpeg:5}\n"
                 out.write(line)
 
                 if packet_count % 100 == 0:
@@ -292,19 +293,19 @@ def detailed_header_analysis(pcap_file, output_file, num_packets=50):
                 packet_count += 1
 
                 magic_type = payload[0:4]
-                sequence = payload[4:6]
-                timestamp_field = payload[6:12]
+                sequence = payload[4:8]
+                frametick = payload[8:12]
                 fragment = payload[12:14]
                 reserved = payload[14:20]
 
                 try:
                     seq_num = struct.unpack('<H', sequence)[0]
                     frag_num = struct.unpack('<H', fragment)[0]
-                    timestamp_float = struct.unpack('<f', timestamp_field[2:6])[0] if len(timestamp_field) >= 6 else 0.0
+                    unknown_float = struct.unpack('<f', frametick[2:6])[0] if len(frametick) >= 6 else 0.0
                 except:
                     seq_num = 0
                     frag_num = 0
-                    timestamp_float = 0.0
+                    unknown_float = 0.0
 
                 sequence_patterns.append(seq_num)
                 fragment_patterns.append(frag_num)
@@ -312,7 +313,7 @@ def detailed_header_analysis(pcap_file, output_file, num_packets=50):
                 out.write(f"Packet {packet_count} - Size: {len(payload)} bytes\n")
                 out.write(f"  Magic/Type:   {' '.join(f'{b:02x}' for b in magic_type)} (constant: {magic_type == b'\x02\x00\xac\x05'})\n")
                 out.write(f"  Sequence:     {' '.join(f'{b:02x}' for b in sequence)} = {seq_num} (0x{seq_num:04x})\n")
-                out.write(f"  Timestamp:    {' '.join(f'{b:02x}' for b in timestamp_field)} = {timestamp_float}\n")
+                out.write(f"  Frametick:    {' '.join(f'{b:02x}' for b in frametick)} = {unknown_float}\n")
                 out.write(f"  Fragment:     {' '.join(f'{b:02x}' for b in fragment)} = {frag_num} (0x{frag_num:04x})\n")
                 out.write(f"  Reserved:     {' '.join(f'{b:02x}' for b in reserved)}\n")
 
@@ -359,7 +360,7 @@ def create_csv_analysis(pcap_file, output_file, num_packets=0):
     with open(pcap_file, 'rb') as f:
         pcap = dpkt.pcap.Reader(f)
         with open(output_file, 'w') as out:
-            out.write("PacketNumber,TotalSize,MagicByte,StreamID,SequenceNum,FragmentType,Timestamp,HasJPEG,PayloadStart\n")
+            out.write("PacketNumber,TotalSize,MagicByte,StreamID,SequenceNum,FragmentType,unknown 6 bytes,HasJPEG,PayloadStart\n")
             packet_count = 0
 
             for ts, buf in pcap:
@@ -374,15 +375,15 @@ def create_csv_analysis(pcap_file, output_file, num_packets=0):
                 try:
                     magic_byte = payload[0]
                     stream_id = struct.unpack('<H', payload[2:4])[0]
-                    sequence_num = struct.unpack('<H', payload[4:6])[0]
+                    sequence_num = struct.unpack('<H', payload[4:8])[0]
                     fragment_type = struct.unpack('<H', payload[12:14])[0]
-                    timestamp_float = struct.unpack('<f', payload[8:12])[0] if len(payload) >= 12 else 0.0
+                    unknown_float = struct.unpack('<f', payload[8:12])[0] if len(payload) >= 12 else 0.0
                     has_jpeg = "1" if b'\xff\xd8' in payload[20:100] else "0"
                     payload_start = ' '.join(f'{b:02x}' for b in payload[20:25])
                 except:
                     continue
 
-                line = f"{packet_count},{len(payload)},{magic_byte},{stream_id},{sequence_num},{fragment_type},{timestamp_float:.2f},{has_jpeg},\"{payload_start}\"\n"
+                line = f"{packet_count},{len(payload)},{magic_byte},{stream_id},{sequence_num},{fragment_type},{unknown_float:.2f},{has_jpeg},\"{payload_start}\"\n"
                 out.write(line)
 
                 if packet_count % 100 == 0:
