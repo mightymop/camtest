@@ -225,7 +225,7 @@ def analyze_headers_to_file(pcap_file, output_file, num_packets=0):
             out.write("# UDP Payload Header Analysis\n")
             out.write(f"# PCAP File: {pcap_file}\n")
             out.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            out.write("# Format: PacketNumber | TotalSize ||| Magic/Type | Sequence | Frametick  | Fragment | Reserved ||| HasJPEG\n")
+            out.write("# Format: Nr | TotalSize ||| Type | Reserved | Blocksize | Sequence | Frametick | Offset | Reserved ||| HasJPEG\n")
             out.write("#                        CALCULATED||| ---------------- RTP HEADER BYTES ---------------------- ||| PAYLOAD\n")
             out.write("#" + "="*100 + "\n")
 
@@ -244,14 +244,16 @@ def analyze_headers_to_file(pcap_file, output_file, num_packets=0):
                 successful_packets += 1
                 packet_count += 1
                 
-                magic_type = ' '.join(f'{b:02x}' for b in payload[0:4])
+                type = ' '.join(f'{b:02x}' for b in payload[0:1])
+                reserved = ' '.join(f'{b:02x}' for b in payload[1:2])
+                payload_length = ' '.join(f'{b:02x}' for b in payload[2:4])
                 sequence = ' '.join(f'{b:02x}' for b in payload[4:8])
-                frametick = ' '.join(f'{b:02x}' for b in payload[8:12])
-                fragment = ' '.join(f'{b:02x}' for b in payload[12:14])
-                reserved = ' '.join(f'{b:02x}' for b in payload[14:20])
+                Framesize = ' '.join(f'{b:02x}' for b in payload[8:12])
+                fragment = ' '.join(f'{b:02x}' for b in payload[12:16])
+                timestamp = ' '.join(f'{b:02x}' for b in payload[16:20])
                 has_jpeg = "YES" if b'\xff\xd8' in payload[20:100] else "NO"
 
-                line = f"{packet_count:6d} | {len(payload[20:]):6d} ||| {magic_type:11} | {sequence:11} | {frametick:11} | {fragment:5} | {reserved:17} ||| {has_jpeg:5}\n"
+                line = f"{packet_count:5d} | {len(payload[20:]):4d} ||| {type:2} | {reserved:2} | {payload_length:5} | {sequence:11} | {Framesize:11} | {fragment:11} | {timestamp:11} ||| {has_jpeg:5}\n"
                 out.write(line)
 
                 if packet_count % 100 == 0:
@@ -295,8 +297,8 @@ def detailed_header_analysis(pcap_file, output_file, num_packets=50):
                 magic_type = payload[0:4]
                 sequence = payload[4:8]
                 frametick = payload[8:12]
-                fragment = payload[12:14]
-                reserved = payload[14:20]
+                fragment = payload[12:16]
+                reserved = payload[16:20]
 
                 try:
                     seq_num = struct.unpack('<H', sequence)[0]
@@ -311,17 +313,20 @@ def detailed_header_analysis(pcap_file, output_file, num_packets=50):
                 fragment_patterns.append(frag_num)
 
                 out.write(f"Packet {packet_count} - Size: {len(payload[20:])} bytes\n")
-                out.write(f"  Magic/Type:   {' '.join(f'{b:02x}' for b in magic_type)} (constant: {magic_type == b'\x02\x00\xac\x05'})\n")
-                out.write(f"  Sequence:     {' '.join(f'{b:02x}' for b in sequence)} = {seq_num} (0x{seq_num:04x})\n")
-                out.write(f"  Frametick:    {' '.join(f'{b:02x}' for b in frametick)} = {unknown_float}\n")
-                out.write(f"  Fragment:     {' '.join(f'{b:02x}' for b in fragment)} = {frag_num} (0x{frag_num:04x})\n")
-                out.write(f"  Reserved:     {' '.join(f'{b:02x}' for b in reserved)}\n")
+                out.write(f"  Type | Reserved:   {' '.join(f'{b:02x}' for b in payload[0:1])} | {' '.join(f'{b:02x}' for b in payload[1:2])}\n")
+                out.write(f"  Blocksize:         {' '.join(f'{b:02x}' for b in payload[2:4])}\n")
+                out.write(f"  Sequence:          {' '.join(f'{b:02x}' for b in sequence)} \n")
+                out.write(f"  Frametick:         {' '.join(f'{b:02x}' for b in frametick)} \n")
+                out.write(f"  Fragment:          {' '.join(f'{b:02x}' for b in fragment)} \n")
+                out.write(f"  Unknown:           {' '.join(f'{b:02x}' for b in reserved)}\n")
 
                 payload_data = payload[20:min(30, len(payload))]
                 payload_hex = ' '.join(f'{b:02x}' for b in payload_data)
                 has_jpeg = "YES" if b'\xff\xd8' in payload[20:100] else "NO"
-                out.write(f"  Payload Start: {payload_hex}\n")
-                out.write(f"  Has JPEG:      {has_jpeg}\n")
+                has_eof = "YES" if b'\xff\xd9' in payload else "NO"
+                out.write(f"  Payload Start:     {payload_hex}\n")
+                out.write(f"  Has SOI (FFD8):    {has_jpeg}\n")
+                out.write(f"  Has EOI (FFD9):    {has_eof}\n")
                 out.write("-" * 80 + "\n\n")
 
                 if packet_count % 10 == 0:
@@ -350,52 +355,6 @@ def detailed_header_analysis(pcap_file, output_file, num_packets=50):
 
     print(f"✅ Detailed analysis completed! Wrote {packet_count} packets to {output_file}")
 
-def create_csv_analysis(pcap_file, output_file, num_packets=0):
-    """Creates CSV format for easy analysis"""
-    print(f"\n📈 Creating CSV Analysis: {output_file}")
-
-    successful_packets = 0
-    total_packets = 0
-
-    with open(pcap_file, 'rb') as f:
-        pcap = dpkt.pcap.Reader(f)
-        with open(output_file, 'w') as out:
-            out.write("PacketNumber,TotalSize,MagicByte,StreamID,SequenceNum,FragmentType,unknown 6 bytes,HasJPEG,PayloadStart\n")
-            packet_count = 0
-
-            for ts, buf in pcap:
-                total_packets += 1
-                payload = process_packet_improved(buf)
-                if not payload or len(payload) < 20:
-                    continue
-
-                successful_packets += 1
-                packet_count += 1
-
-                try:
-                    magic_byte = payload[0]
-                    stream_id = struct.unpack('<H', payload[2:4])[0]
-                    sequence_num = struct.unpack('<H', payload[4:8])[0]
-                    fragment_type = struct.unpack('<H', payload[12:14])[0]
-                    unknown_float = struct.unpack('<f', payload[8:12])[0] if len(payload) >= 12 else 0.0
-                    has_jpeg = "1" if b'\xff\xd8' in payload[20:100] else "0"
-                    payload_start = ' '.join(f'{b:02x}' for b in payload[20:25])
-                except:
-                    continue
-
-                line = f"{packet_count},{len(payload)},{magic_byte},{stream_id},{sequence_num},{fragment_type},{unknown_float:.2f},{has_jpeg},\"{payload_start}\"\n"
-                out.write(line)
-
-                if packet_count % 100 == 0:
-                    print(f"  Processed {packet_count} packets...")
-
-                if num_packets > 0 and packet_count >= num_packets:
-                    break
-
-    success_rate = (successful_packets / total_packets * 100) if total_packets > 0 else 0
-    print(f"✅ CSV analysis completed! Wrote {packet_count} packets to {output_file}")
-    print(f"📊 Success rate: {successful_packets}/{total_packets} packets ({success_rate:.1f}%)")
-
 if __name__ == "__main__":
     pcap_file = "mjpeg_stream.pcap"
     
@@ -419,14 +378,11 @@ if __name__ == "__main__":
     # 2. Detailed analysis
     detailed_header_analysis(pcap_file, "udp_headers_detailed.txt", num_packets=2500)
 
-    # 3. CSV for data analysis
-    create_csv_analysis(pcap_file, "udp_headers_analysis.csv", num_packets=2500)
 
     print("\n🎉 All analyses completed!")
     print("📁 Files created:")
     print("   - udp_headers_overview.txt (tabular overview)")
     print("   - udp_headers_detailed.txt (detailed analysis)")
-    print("   - udp_headers_analysis.csv (CSV for data analysis)")
     print("\n💡 If no UDP packets were found, check:")
     print("   - PCAP file format (see above analysis)")
     print("   - WLAN encryption (script only works with unencrypted traffic)")
