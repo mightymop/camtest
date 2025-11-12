@@ -75,7 +75,7 @@ class JFIFMJpegStreamReceiver {
         this.surfaceHolder = holder
         this.listener = listener
         this.context = context
-        this.frameAssembler = RTPFrameAssembler(context)
+        this.frameAssembler = RTPFrameAssembler(DEBUG)
 
         Log.d(TAG, "JFIF MJPEG Receiver initialized")
         listener.onStreamInfo("JFIF MJPEG Ready - Performance Optimized")
@@ -526,7 +526,7 @@ class JFIFMJpegStreamReceiver {
     }
 
     // ------------------- Optimized Frame Assembler -------------------
-    class RTPFrameAssembler(private val context: Context) {
+    class RTPFrameAssembler {
 
         private val activeFrames = mutableMapOf<FrameKey, FrameAssembly>()
         private val frameTimeout = 1000L
@@ -537,6 +537,13 @@ class JFIFMJpegStreamReceiver {
             val fragments: MutableMap<Int, ByteArray> = mutableMapOf(),
             var lastUpdate: Long = System.currentTimeMillis()
         )
+
+        private var debug : Boolean = false
+
+        constructor( debug: Boolean)
+        {
+            this.debug=debug
+        }
 
         fun processPacket(packet: ByteArray): ByteArray? {
             val rtpInfo = parseRTPHeader(packet) ?: return null
@@ -554,8 +561,19 @@ class JFIFMJpegStreamReceiver {
             frameAssembly.lastUpdate = System.currentTimeMillis()
 
             // Check if frame is complete
-            if (isFrameComplete(frameAssembly)) {
-                val frameData = assembleJpegFrame(frameAssembly.fragments)
+            val frameData = isFrameComplete(frameAssembly)
+            if (frameData!=null) {
+
+                if (debug) {
+                    for ((offset, fragment) in frameAssembly.fragments.toSortedMap()) {
+                        val hexString = fragment.joinToString(" ") { String.format("%02X", it) }
+                        Log.d(
+                            TAG,
+                            "Fragment at offset $offset (${fragment.size} bytes): $hexString"
+                        )
+                    }
+                }
+
                 activeFrames.remove(frameKey)
                 framesAssembled++
                 return frameData
@@ -564,12 +582,19 @@ class JFIFMJpegStreamReceiver {
             return null
         }
 
-        private fun isFrameComplete(frame: FrameAssembly): Boolean {
+        private fun isFrameComplete(frame: FrameAssembly): ByteArray? {
             val fragments = frame.fragments
 
-            return fragments.values.any { hasSOIMarker(it) } &&
-                    fragments.values.any { hasEOFMarker(it) } &&
-                    isValidJpegFrame(assembleJpegFrame(fragments))
+            var hasMarkers =  fragments.values.any { hasSOIMarker(it) } && fragments.values.any { hasEOFMarker(it) }
+            if (hasMarkers) {
+                var frame = assembleJpegFrame(fragments)
+                if (isValidJpegFrame(frame))
+                {
+                    return frame
+                }
+            }
+
+            return null
         }
 
         private fun isValidJpegFrame(data: ByteArray): Boolean {
@@ -580,7 +605,8 @@ class JFIFMJpegStreamReceiver {
         }
 
         private fun assembleJpegFrame(fragments: Map<Int, ByteArray>): ByteArray {
-            if (fragments.isEmpty()) return ByteArray(0)
+            if (fragments.isEmpty())
+                return ByteArray(0)
 
             val sorted = fragments.toSortedMap()
             val lastOffset = sorted.keys.last()
@@ -589,11 +615,6 @@ class JFIFMJpegStreamReceiver {
 
             for ((offset, fragment) in sorted) {
                 System.arraycopy(fragment, 0, buffer, offset, fragment.size)
-            }
-
-            for ((offset, fragment) in fragments.toSortedMap()) {
-                val hexString = fragment.joinToString(" ") { String.format("%02X", it) }
-                Log.d(TAG, "Fragment at offset $offset (${fragment.size} bytes): $hexString")
             }
 
             return trimToEOF(buffer)
@@ -643,17 +664,19 @@ class JFIFMJpegStreamReceiver {
                         ((data[6].toInt() and 0xFF) shl 16) or
                         ((data[7].toInt() and 0xFF) shl 24)
 
-                // 4-Byte Timestamp (Little Endian)
-                val timestamp =  (data[8].toInt() and 0xFF)        or
+                // 4-Byte frametick (Little Endian)
+                val frametick =  (data[8].toInt() and 0xFF)        or
                         ((data[9].toInt() and 0xFF) shl 8) or
                         ((data[10].toInt() and 0xFF) shl 16) or
                         ((data[11].toInt() and 0xFF) shl 24)
 
-                // 2-Byte Fragment Offset (Little Endian)
-                val fragmentOffset = (data[12].toInt() and 0xFF) or
-                        ((data[13].toInt() and 0xFF) shl 8)
+                // 4-Byte Fragment Offset (Little Endian)
+                val fragmentOffset = (data[12].toInt() and 0xFF)        or
+                        ((data[13].toInt() and 0xFF) shl 8) or
+                        ((data[14].toInt() and 0xFF) shl 16) or
+                        ((data[15].toInt() and 0xFF) shl 24)
 
-                RTPInfo(frameId, timestamp, fragmentOffset)
+                RTPInfo(frameId, frametick, fragmentOffset)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error while parsing custom RTP Header: ${e.message}")

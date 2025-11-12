@@ -136,33 +136,10 @@ class CTPProtocol {
             }
 
             val json = JSONObject(contentStr)
-            val errorType = json.optInt("err", 0)
+
             val operation = json.optString("op", "")
-            val paramsJson = json.optJSONObject("param") ?: JSONObject()
 
-            // Convert params to map
-            val paramsMap = mutableMapOf<String, String>()
-            val keys = paramsJson.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                paramsMap[key] = paramsJson.optString(key, "")
-            }
-
-            // Build response JSON in your format
-            val responseJson = buildString {
-                append("""{"op":"$operation",""")
-                if (errorType != 0) {
-                    append(""","err":$errorType,""")
-                }
-                append(""","param":{""")
-                paramsMap.entries.forEachIndexed { index, (key, value) ->
-                    if (index > 0) append(",")
-                    append("""""$key":"$value"""")
-                }
-                append("}}")
-            }
-
-            CTPMessage(topic, 0, responseJson)
+            CTPMessage(topic, 0, contentStr, op=operation)
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing content: ${e.message}", e)
             CTPMessage(topic, 0, "{}")

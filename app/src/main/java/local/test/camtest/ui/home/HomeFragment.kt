@@ -1,5 +1,7 @@
 package local.test.camtest.ui.home
 
+import MinimalSdpServer
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -21,9 +23,21 @@ import local.test.camtest.databinding.FragmentHomeBinding
 import local.test.camtest.protocol.CTPCommand
 import local.test.camtest.protocol.CTPProtocol
 import local.test.camtest.protocol.JFIFMJpegStreamReceiver
+import local.test.camtest.protocol.NativeConnection
+import org.json.JSONObject
+import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.Media
+import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.interfaces.AbstractVLCEvent
+import org.videolan.libvlc.util.VLCVideoLayout
+import java.io.File
+import java.io.FileDescriptor
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.Inet4Address
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,6 +66,14 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
 
     private var logCount = 0
 
+    private var libVLC: LibVLC? = null
+    private var mediaPlayer: MediaPlayer? = null
+    private var videoLayout: VLCVideoLayout? = null
+
+    private val nativeConnection = NativeConnection()
+
+    private lateinit var sdpServer: MinimalSdpServer
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -61,8 +83,53 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         val root: View = binding.root
 
-        binding.surfaceView.holder.addCallback(this)
+        //binding.surfaceView.holder.addCallback(this)
         mjpegReceiver = JFIFMJpegStreamReceiver()
+
+        sdpServer = MinimalSdpServer(requireContext())
+
+        val options = arrayListOf(
+            "--network-caching=150",
+            "--vout=android-display",
+            "--avcodec-codec=mjpeg",
+            "--verbose",
+            "--verbose=3",
+            "--codec=avcodec",
+            "--file-caching=150",
+            "--clock-jitter=0",
+            "--live-caching=150",
+            "--drop-late-frames",
+            "--skip-frames",
+            "--vout=android-display",
+            "--sout-transcode-vb=20",
+            "--no-audio",
+        )
+
+        try {
+            videoLayout = binding.videoLayout
+            libVLC = LibVLC(context, options)
+            mediaPlayer = MediaPlayer(libVLC).apply {
+                setVideoScale(MediaPlayer.ScaleType.SURFACE_BEST_FIT)
+                attachViews(videoLayout!!, null, false, false)
+            }
+            mediaPlayer!!.setEventListener { event ->
+                when (event.type) {
+                    MediaPlayer.Event.Opening -> Log.d("VLC", "Opening...")
+                    MediaPlayer.Event.Playing -> Log.d("VLC", "Playing!")
+                    MediaPlayer.Event.Paused -> Log.d("VLC", "Paused")
+                    MediaPlayer.Event.Stopped -> Log.d("VLC", "Stopped")
+                    MediaPlayer.Event.EndReached -> Log.d("VLC", "End reached")
+                    MediaPlayer.Event.EncounteredError -> Log.e("VLC", "Error: ${event.type}")
+                    else -> Log.d("VLC", "Event: ${event.type}")
+
+                }
+            }
+
+
+        } catch (e: Exception) {
+            Log.e(TAG,e.message,e)
+        }
+
 
         requireActivity().addMenuProvider(object : MenuProvider {
             override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {
@@ -79,6 +146,7 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                 val protocol = CTPProtocol()
 
                 return when (menuItem.itemId) {
+
                     R.id.action_quality_hd -> {
                         menuItem.isChecked = !menuItem.isChecked
                         // HD Qualität auswählen
@@ -95,6 +163,12 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                         menuItem.isChecked = !menuItem.isChecked
                         // HD Qualität auswählen
                         use_pcapplayer = !use_pcapplayer
+                        true
+                    }
+
+                    R.id.action_test -> {
+                        stopVLC()
+                        playvideo()
                         true
                     }
 
@@ -197,8 +271,8 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
 
                     R.id.action_open_rt_stream -> {
 
-                        mjpegReceiver.stopStream()
-                        mjpegReceiver.startStream(use_dump)
+                        //mjpegReceiver.stopStream()
+                        //mjpegReceiver.startStream(use_dump)
 
                         if (!use_pcapplayer)
                         {
@@ -236,6 +310,7 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                     R.id.action_close_rt_stream -> {
 
                         mjpegReceiver.stopStream()
+                        stopVLC()
 
                         val bytePacket = protocol.buildPacket(
                             CTPCommand.CLOSE_RT_STREAM.command,
@@ -263,6 +338,103 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
         }
 
         return root
+    }
+
+    fun startVLC() {
+        try {
+
+            sdpServer.startServer()
+            val uri = Uri.parse( sdpServer.getSdpUrl(getLocalWifiLikeIp()))  //Uri.parse("http://192.168.1.2:12345/stream.sdp")
+            val media = Media(libVLC, uri).apply {
+                addOption(":network-caching=500")
+                addOption(":file-caching=1500")
+                addOption(":live-caching=500")
+                addOption(":no-audio")
+                addOption(":rtp-ipv4=yes")
+                addOption(":ipv4-timeout=5000")
+                addOption(":verbose=3")
+                addOption(":log-verbose=3")
+                addOption(":no-drop-late-frames")
+                addOption(":no-skip-frames")
+            }
+
+            mediaPlayer?.apply {
+                setMedia(media)
+                play()
+            }
+
+            media.release()
+        } catch (e: Exception) {
+            Log.e(TAG,e.message,e)
+        }
+    }
+
+    fun getLocalWifiLikeIp(): String {
+        val en = NetworkInterface.getNetworkInterfaces()
+        while (en.hasMoreElements()) {
+            val intf = en.nextElement()
+            if (!intf.isUp || intf.isLoopback) continue
+            val addrs = intf.inetAddresses
+            while (addrs.hasMoreElements()) {
+                val addr = addrs.nextElement()
+                if (addr is Inet4Address) {
+                    val ip = addr.hostAddress
+                    // Prüfe, ob IP wie typische private WLAN-IP aussieht
+                    if (ip.startsWith("192.168.")) {
+                        return ip
+                    }
+                }
+            }
+        }
+        return "127.0.0.1"
+    }
+
+    private fun copyAssetToCache(assetName: String): File {
+        val tempFile = File(requireContext().cacheDir, assetName)
+
+        // Nur kopieren wenn nicht bereits vorhanden
+        if (!tempFile.exists()) {
+            requireContext().assets.open(assetName).use { inputStream ->
+                FileOutputStream(tempFile).use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+            Log.d("VLC", "Asset copied to: ${tempFile.absolutePath}")
+        }
+
+        return tempFile
+    }
+
+    fun playvideo()
+    {
+        try {
+            var file = copyAssetToCache("file_example_MP4_640_3MG.mp4")
+
+            var media = Media(libVLC, Uri.fromFile(file));
+            media.setHWDecoderEnabled(true, false);
+
+            mediaPlayer!!.setMedia(media);
+            media.release();
+            mediaPlayer!!.play();
+
+        } catch (e : Exception) {
+            Log.e(TAG,e.message,e)
+        }
+    }
+
+    fun stopVLC() {
+        mediaPlayer?.stop()
+        mediaPlayer?.setMedia(null)
+        sdpServer.stopServer()
+    }
+
+    fun releaseVLC() {
+        mediaPlayer?.detachViews()
+        mediaPlayer?.release()
+        libVLC?.release()
+        mediaPlayer = null
+        libVLC = null
+        videoLayout = null
     }
 
     override fun surfaceChanged(
@@ -389,6 +561,17 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                     if (message.op == "NOTIFY") {
                         if (message.command == CTPCommand.OPEN_RT_STREAM.command) {
 
+                            var json = JSONObject(message.json)
+                            var param = json.getJSONObject("param")
+
+                            val ip = getLocalWifiLikeIp()
+
+                            nativeConnection.stop()
+                            nativeConnection.start(ip, param.getInt("w"), param.getInt("h"))
+
+                            stopVLC()
+                            startVLC()
+
                             log("MJPEG Stream started")
                         }
 
@@ -418,6 +601,9 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
         mjpegReceiver.stopStream()
         mjpegReceiver.release()
         _binding = null
+        stopVLC()
+        nativeConnection.stop()
+        releaseVLC()
     }
 
 }

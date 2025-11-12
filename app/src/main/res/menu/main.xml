@@ -22,10 +22,16 @@
             app:showAsAction="never" />
     </group>
     <item
+        android:id="@+id/action_test"
+        android:orderInCategory="100"
+        android:title="Videotest"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_reconnect"
         android:orderInCategory="100"
         android:title="Reconnect"
         app:showAsAction="never" />
+
     <item
         android:id="@+id/action_app_access"
         android:orderInCategory="100"

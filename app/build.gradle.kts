@@ -19,9 +19,21 @@ android {
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments +=  listOf("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON", "-DANDROID_STL=c++_shared")
+            }
+        }
     }
 
-
+    externalNativeBuild {
+        cmake {
+            version = "3.30.5"
+            path = file("src/main/jni/CMakeLists.txt")
+        }
+    }
 
     buildTypes {
         release {
@@ -45,7 +57,7 @@ android {
 }
 
 dependencies {
-
+    implementation(libs.libvlc)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
