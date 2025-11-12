@@ -23,15 +23,13 @@ import local.test.camtest.databinding.FragmentHomeBinding
 import local.test.camtest.protocol.CTPCommand
 import local.test.camtest.protocol.CTPProtocol
 import local.test.camtest.protocol.JFIFMJpegStreamReceiver
-import local.test.camtest.protocol.NativeConnection
+import local.test.camtest.protocol.RtpConvertProxy
 import org.json.JSONObject
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.AbstractVLCEvent
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
-import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -70,7 +68,7 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
     private var mediaPlayer: MediaPlayer? = null
     private var videoLayout: VLCVideoLayout? = null
 
-    private val nativeConnection = NativeConnection()
+    private val nativeConnection = RtpConvertProxy()
 
     private lateinit var sdpServer: MinimalSdpServer
 
@@ -89,19 +87,19 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
         sdpServer = MinimalSdpServer(requireContext())
 
         val options = arrayListOf(
-            "--network-caching=150",
+            "--network-caching=0",
             "--vout=android-display",
-            "--avcodec-codec=mjpeg",
+       //     "--avcodec-codec=mjpeg",
             "--verbose",
             "--verbose=3",
-            "--codec=avcodec",
-            "--file-caching=150",
-            "--clock-jitter=0",
-            "--live-caching=150",
-            "--drop-late-frames",
-            "--skip-frames",
-            "--vout=android-display",
-            "--sout-transcode-vb=20",
+            //     "--codec=avcodec",
+            //      "--file-caching=150",
+            //      "--clock-jitter=0",
+            //      "--live-caching=150",
+            //       "--drop-late-frames",
+            //     "--skip-frames",
+
+            //   "--sout-transcode-vb=20",
             "--no-audio",
         )
 
@@ -343,19 +341,20 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
     fun startVLC() {
         try {
 
-            sdpServer.startServer()
-            val uri = Uri.parse( sdpServer.getSdpUrl(getLocalWifiLikeIp()))  //Uri.parse("http://192.168.1.2:12345/stream.sdp")
+
+            val uri = Uri.parse( sdpServer.getSdpUrl(getLocalWifiLikeIp()))  //Uri.parse("rtp://192.168.1.2:6666") //
+            log("Starting stream on: "+uri.toString())
             val media = Media(libVLC, uri).apply {
-                addOption(":network-caching=500")
-                addOption(":file-caching=1500")
-                addOption(":live-caching=500")
+                addOption(":network-caching=0")
+              //  addOption(":file-caching=1500")
+                //    addOption(":live-caching=500")
                 addOption(":no-audio")
-                addOption(":rtp-ipv4=yes")
-                addOption(":ipv4-timeout=5000")
+                //   addOption(":rtp-ipv4=yes")
+                //   addOption(":ipv4-timeout=5000")
                 addOption(":verbose=3")
                 addOption(":log-verbose=3")
-                addOption(":no-drop-late-frames")
-                addOption(":no-skip-frames")
+                //     addOption(":no-drop-late-frames")
+                //     addOption(":no-skip-frames")
             }
 
             mediaPlayer?.apply {
@@ -567,9 +566,12 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
                             val ip = getLocalWifiLikeIp()
 
                             nativeConnection.stop()
-                            nativeConnection.start(ip, param.getInt("w"), param.getInt("h"))
+
+                            var destPort = 5000
+                            nativeConnection.start(ip, destPort, true, param.getInt("fps"))
 
                             stopVLC()
+                            sdpServer.startServer(param.getInt("w"),param.getInt("h"),destPort, param.getInt("fps"))
                             startVLC()
 
                             log("MJPEG Stream started")
@@ -597,13 +599,13 @@ class HomeFragment : Fragment(), SurfaceHolder.Callback {
 
     override fun onDestroyView() {
         super.onDestroyView()
-
+/*
         mjpegReceiver.stopStream()
         mjpegReceiver.release()
         _binding = null
         stopVLC()
         nativeConnection.stop()
-        releaseVLC()
+        releaseVLC()*/
     }
 
 }

@@ -1,4 +1,5 @@
 import android.content.Context
+import android.util.Log
 import local.test.camtest.R
 import java.io.IOException
 import java.net.Inet4Address
@@ -7,14 +8,26 @@ import java.net.ServerSocket
 import java.net.Socket
 
 class MinimalSdpServer(private val context: Context) {
+    private var TAG: String = "MinimalSdpServer"
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
     private var port = 12345
 
-    fun startServer(): Int {
+    private var width = 640
+    private var height = 480
+
+    private var fps = 30
+
+    private var dstPort = 6666
+
+    fun startServer(width: Int, height: Int, dstPort: Int, fps: Int): Int {
         return try {
             serverSocket = ServerSocket(port) // 0 = auto-assign port
             isRunning = true
+            this.width = width
+            this.height=height
+            this.dstPort=dstPort
+            this.fps=fps
 
             Thread {
                 while (isRunning) {
@@ -40,6 +53,7 @@ class MinimalSdpServer(private val context: Context) {
         try {
             val outputStream = client.getOutputStream()
             val sdpContent = createSdpContent()
+            Log.i(TAG,sdpContent)
             val response = "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: application/sdp\r\n" +
                     "Content-Length: ${sdpContent.toByteArray().size}\r\n" +
@@ -67,6 +81,10 @@ class MinimalSdpServer(private val context: Context) {
         inputStream.close()
 
         content=content.replace("127.0.0.1",ip)+"\n"
+        content=content.replace("640",this.width.toString())
+        content=content.replace("480",this.height.toString())
+        content=content.replace("framerate:30","framerate:"+this.fps.toString())
+        content=content.replace("6666",this.dstPort.toString())
         return content;
     }
 
