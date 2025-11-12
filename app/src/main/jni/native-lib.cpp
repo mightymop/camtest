@@ -119,8 +119,8 @@ static int parse_jpeg_size(const uint8_t *data, size_t len, int *w, int *h) {
 static void save_jpeg_to_file(const uint8_t *jpeg_data, size_t jpeg_size, uint32_t frame_seq, uint32_t offset, bool is_complete_frame) {
     char filename[128];
 
-    if (!save_debug_image)
-        return;
+    /*if (!save_debug_image)
+        return;*/
 
     if (is_complete_frame) {
         snprintf(filename, sizeof(filename), "/sdcard/Download/frame_%06u_complete.jpg", frame_seq);
@@ -408,7 +408,7 @@ static void *worker_func(void *arg) {
 extern "C" {
 // JNI: start(destIp, destPort, useRfc2435, fps)
 JNIEXPORT void JNICALL
-Java_local_test_camtest_protocol_RtpConvertProxy_start(JNIEnv *env, jobject thiz, jstring destIp,
+Java_de_mopsdom_rearview_protocol_RtpConvertProxy_start(JNIEnv *env, jobject thiz, jstring destIp,
                                                        jint destPort, jboolean juseRfc2435,
                                                        jint jfps) {
     if (running) {
@@ -477,7 +477,7 @@ Java_local_test_camtest_protocol_RtpConvertProxy_start(JNIEnv *env, jobject thiz
 }
 
 JNIEXPORT void JNICALL
-Java_local_test_camtest_protocol_RtpConvertProxy_stop(JNIEnv *env, jobject thiz) {
+Java_de_mopsdom_rearview_protocol_RtpConvertProxy_stop(JNIEnv *env, jobject thiz) {
     if (!running) {
         ALOGI("not running");
         return;

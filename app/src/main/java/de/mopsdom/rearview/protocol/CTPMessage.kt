@@ -1,4 +1,4 @@
-package local.test.camtest.protocol
+package de.mopsdom.rearview.protocol
 
 import org.json.JSONObject
 

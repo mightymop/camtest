@@ -1,4 +1,4 @@
-package local.test.camtest.protocol
+package de.mopsdom.rearview.protocol
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -9,7 +9,7 @@ import android.graphics.Paint
 import android.media.ExifInterface
 import android.util.Log
 import android.view.SurfaceHolder
-import local.test.camtest.R
+import de.mopsdom.rearview.R
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.RandomAccessFile
@@ -38,15 +38,41 @@ class JFIFMJpegStreamReceiver {
         fun onPcapDumpStopped(filePath: String, packetCount: Int)
     }
 
+    enum class StreamMode {
+        RTP_FORWARDING,    // Aktuelles Verhalten - Weiterleitung via RTP
+        DIRECT_DISPLAY     // NEU: Direkte Anzeige ohne RTP
+    }
+
     private var udpSocket: DatagramSocket? = null
     private val isReceiving = AtomicBoolean(false)
     private var listener: StreamListener? = null
     private var surfaceHolder: SurfaceHolder? = null
     private var paint: Paint = Paint()
+    private val redPaint = Paint().apply {
+        color = Color.RED
+        strokeWidth = 15f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val yellowPaint = Paint().apply {
+        color = Color.YELLOW
+        strokeWidth = 15f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val greenPaint = Paint().apply {
+        color = Color.GREEN
+        strokeWidth = 15f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
 
     // Performance Optimierungen
-    private val packetQueue = LinkedBlockingQueue<ByteArray>(100) // Buffer für Pakete
+    private val packetQueue = LinkedBlockingQueue<ByteArray>(100)
     private lateinit var frameAssembler: RTPFrameAssembler
+    private lateinit var directFrameAssembler: DirectFrameAssembler // NEU
     private lateinit var context: Context
 
     // Frame-Rate Limiting
@@ -59,11 +85,24 @@ class JFIFMJpegStreamReceiver {
     private var pcapFile: RandomAccessFile? = null
     private var pcapPacketCount = 0
 
+    private var parkingLines: Boolean = true
+
+    // NEUE VARIABLEN FÜR DIRECT DISPLAY
+    private var streamMode: StreamMode = StreamMode.DIRECT_DISPLAY // Standard: Direkte Anzeige
+    private var currentStreamMode: StreamMode = StreamMode.DIRECT_DISPLAY
+    private var frameBuffer = ByteArray(200 * 1024) // 200KB Buffer für komplette Frames
+    private var frameBufferUsed = 0
+    private var currentFrameSize = 0
+    private var currentFrameSeq = 0
+    private var framesReceived = 0L
+    private var fps = 0
+
     private val DEBUG = false
 
     companion object {
         private const val TAG = "JFIFMJpegStreamReceiver"
         private const val BUFFER_SIZE = 65536
+        private const val PROTO_HEADER_SIZE = 20
     }
 
     init {
@@ -76,13 +115,21 @@ class JFIFMJpegStreamReceiver {
         this.listener = listener
         this.context = context
         this.frameAssembler = RTPFrameAssembler(DEBUG)
+        this.directFrameAssembler = DirectFrameAssembler() // NEU
 
-        Log.d(TAG, "JFIF MJPEG Receiver initialized")
-        listener.onStreamInfo("JFIF MJPEG Ready - Performance Optimized")
+        Log.d(TAG, "JFIF MJPEG Receiver initialized - Mode: $streamMode")
+        listener.onStreamInfo("JFIF MJPEG Ready - Mode: $streamMode")
+    }
+
+    fun setStreamMode(mode: StreamMode) {
+        this.streamMode = mode
+        Log.d(TAG, "Stream mode set to: $mode")
+        listener?.onStreamInfo("Mode changed to: $mode")
     }
 
     fun startStream(enablePcapDump: Boolean = false) {
         pcapDumpEnabled = enablePcapDump
+        currentStreamMode = streamMode // Aktuellen Modus speichern
 
         if (isReceiving.get()) {
             Log.w(TAG, "Stream already running")
@@ -95,10 +142,19 @@ class JFIFMJpegStreamReceiver {
         packetQueue.clear()
         framesProcessed = 0
         framesSkipped = 0
+        framesReceived = 0
+
+        // Buffer zurücksetzen
+        frameBufferUsed = 0
+        currentFrameSize = 0
 
         // Starte separate Threads für Empfang und Verarbeitung
         startUdpReceiver()
-        startFrameProcessor()
+
+        when (currentStreamMode) {
+            StreamMode.RTP_FORWARDING -> startRtpFrameProcessor()
+            StreamMode.DIRECT_DISPLAY -> startDirectFrameProcessor() // NEU
+        }
 
         Log.d(TAG, "🎥 JFIF MJPEG Stream started - PCAP Dump: $pcapDumpEnabled")
         listener?.onVideoStarted()
@@ -165,27 +221,24 @@ class JFIFMJpegStreamReceiver {
         }.start()
     }
 
-    private fun startFrameProcessor() {
+    private fun startDirectFrameProcessor() {
         Thread {
-            Log.d(TAG, "Frame Processor started")
+            Log.d(TAG, "Direct Frame Processor started")
 
-            // Pre-allocated objects to reduce GC
             val options = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.RGB_565
-                inMutable = true // Verhindert Hardware Bitmaps
+                inMutable = true
                 inSampleSize = 1
                 inJustDecodeBounds = false
             }
 
             while (isReceiving.get()) {
                 try {
-                    // Non-blocking packet fetch
                     val packet = packetQueue.poll(100, TimeUnit.MILLISECONDS)
                     if (packet != null) {
-                        processPacket(packet, options)
+                        processDirectPacket(packet, options)
                     }
 
-                    // Performance stats
                     if (framesProcessed % 60 == 0) {
                         logPerformanceStats()
                     }
@@ -193,27 +246,354 @@ class JFIFMJpegStreamReceiver {
                 } catch (e: InterruptedException) {
                     break
                 } catch (e: Exception) {
-                    Log.e(TAG, "Frame processing error: ${e.message}")
+                    Log.e(TAG, "Direct frame processing error: ${e.message}")
                 }
             }
 
-            Log.d(TAG, "Frame Processor stopped")
+            Log.d(TAG, "Direct Frame Processor stopped")
         }.start()
     }
 
-    private fun processPacket(packet: ByteArray, options: BitmapFactory.Options) {
+    private fun processDirectPacket(packet: ByteArray, options: BitmapFactory.Options) {
+        if (packet.size < PROTO_HEADER_SIZE) {
+            Log.w(TAG, "Short packet for direct processing: ${packet.size} bytes")
+            return
+        }
 
-        val frameData = frameAssembler.processPacket(packet)
-        if (frameData != null) {
-            // Frame-Rate Limiting
-            val currentTime = System.currentTimeMillis()
-            if (currentTime - lastFrameTime < targetFrameTime) {
-                return // Frame skipping für stabile Framerate
+        // NEU: Prüfe auf kombinierte Pakete
+        val isCombinedPacket = packet.size > 1500
+        if (isCombinedPacket && DEBUG) {
+            Log.d(TAG, "Combined packet detected: ${packet.size} bytes")
+        }
+
+        var processed = 0
+        var fragmentCount = 0
+
+        // NEU: Loop für multiple Frames im Paket
+        while (processed < packet.size) {
+            // Prüfe ob genug Daten für Header vorhanden
+            if (processed + PROTO_HEADER_SIZE > packet.size) {
+                Log.w(TAG, "Incomplete header at offset $processed")
+                break
             }
-            lastFrameTime = currentTime
 
-            framesProcessed++
-            decodeAndDisplayFrame(frameData, options)
+            // Protokoll-Header parsen (Little Endian)
+            val type = packet[processed].toInt() and 0xFF
+            val blockSize = (packet[processed + 2].toInt() and 0xFF) or
+                    ((packet[processed + 3].toInt() and 0xFF) shl 8)
+            val sequence = (packet[processed + 4].toInt() and 0xFF) or
+                    ((packet[processed + 5].toInt() and 0xFF) shl 8) or
+                    ((packet[processed + 6].toInt() and 0xFF) shl 16) or
+                    ((packet[processed + 7].toInt() and 0xFF) shl 24)
+            val frameSize = (packet[processed + 8].toInt() and 0xFF) or
+                    ((packet[processed + 9].toInt() and 0xFF) shl 8) or
+                    ((packet[processed + 10].toInt() and 0xFF) shl 16) or
+                    ((packet[processed + 11].toInt() and 0xFF) shl 24)
+            val offset = (packet[processed + 12].toInt() and 0xFF) or
+                    ((packet[processed + 13].toInt() and 0xFF) shl 8) or
+                    ((packet[processed + 14].toInt() and 0xFF) shl 16) or
+                    ((packet[processed + 15].toInt() and 0xFF) shl 24)
+
+            // Prüfe ob komplettes Fragment verfügbar ist
+            if (processed + PROTO_HEADER_SIZE + blockSize > packet.size) {
+                Log.w(TAG, "Incomplete fragment at offset $processed: need $blockSize bytes, have ${packet.size - processed - PROTO_HEADER_SIZE}")
+                break
+            }
+
+            fragmentCount++
+
+            val dataType = type and 0x7F
+            val isLastFragment = (type and 0x80) != 0
+
+            // NEU: Detailliertes Logging für kombinierte Pakete
+            if (isCombinedPacket && DEBUG) {
+                Log.d(TAG, "Combined packet fragment $fragmentCount: type=0x${type.toString(16)}, seq=$sequence, offset=$offset, size=$blockSize, pos=$processed")
+            }
+
+            // Nur JPEG-Video-Daten verarbeiten (type 2)
+            if (dataType != 2) {
+                processed += PROTO_HEADER_SIZE + blockSize
+                continue
+            }
+
+            val payload = packet.copyOfRange(
+                processed + PROTO_HEADER_SIZE,
+                processed + PROTO_HEADER_SIZE + blockSize
+            )
+
+            val isNewFrame = (offset == 0)
+
+            if (isNewFrame) {
+                // Neuer Frame startet - Buffer zurücksetzen
+                frameBufferUsed = 0
+                currentFrameSeq = sequence
+                currentFrameSize = frameSize
+                if (DEBUG) {
+                    Log.v(
+                        TAG,
+                        "New direct frame: seq=$sequence, expectedSize=$frameSize, combined=$isCombinedPacket"
+                    )
+                }
+            }
+
+            // NEU: JPEG Header Validierung
+            if (offset == 0) {
+                // Prüfe JPEG Start Marker
+                if (payload.size >= 2) {
+                    if (payload[0] == 0xFF.toByte() && payload[1] == 0xD8.toByte()) {
+                        if (DEBUG) {
+                            Log.v(TAG, "Valid JPEG SOI marker found in fragment $fragmentCount")
+                        }
+                    } else {
+                        Log.w(TAG, "INVALID JPEG SOI marker in fragment $fragmentCount: ${payload[0].toInt() and 0xFF} ${payload[1].toInt() and 0xFF}")
+
+                        // Versuche korrumpierte JPEGs zu erkennen
+                        if (payload[0] == 0x00.toByte() && payload[1] == 0x00.toByte()) {
+                            Log.w(TAG, "H264 start code detected in JPEG data - STREAM CORRUPTION!")
+                        }
+                    }
+                }
+            }
+
+            // Daten zum Frame-Buffer hinzufügen
+            if (frameBufferUsed + blockSize <= frameBuffer.size) {
+                System.arraycopy(payload, 0, frameBuffer, frameBufferUsed, blockSize)
+                frameBufferUsed += blockSize
+                if (DEBUG) {
+                    Log.v(
+                        TAG,
+                        "Added $blockSize bytes to direct frame buffer, total: $frameBufferUsed"
+                    )
+                }
+            } else {
+                Log.e(TAG, "Direct frame buffer overflow! Cannot add $blockSize bytes (already $frameBufferUsed used)")
+            }
+
+            // Prüfen ob Frame komplett ist
+            val isFrameComplete = currentFrameSize > 0 && (offset + blockSize >= currentFrameSize)
+
+            if (isFrameComplete) {
+                // Frame-Rate Limiting
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - lastFrameTime < targetFrameTime) {
+                    // Frame überspringen, aber Buffer zurücksetzen
+                    frameBufferUsed = 0
+                    currentFrameSize = 0
+                    processed += PROTO_HEADER_SIZE + blockSize
+                    continue
+                }
+                lastFrameTime = currentTime
+
+                framesProcessed++
+                framesReceived++
+
+                if (DEBUG) {
+                    Log.v(
+                        TAG,
+                        "Direct frame complete: seq=$sequence, size=$frameBufferUsed, combined=$isCombinedPacket"
+                    )
+                }
+                decodeAndDisplayDirectFrame(frameBuffer.copyOfRange(0, frameBufferUsed), options)
+                updateFps()
+
+                // Buffer für nächsten Frame zurücksetzen
+                frameBufferUsed = 0
+                currentFrameSize = 0
+            }
+
+            // Zum nächsten Fragment
+            processed += PROTO_HEADER_SIZE + blockSize
+        }
+
+        // NEU: Zusammenfassung für kombinierte Pakete
+        if (isCombinedPacket && fragmentCount > 1) {
+            if (DEBUG) {
+                Log.i(
+                    TAG,
+                    "=== COMBINED PACKET SUMMARY: $fragmentCount fragments processed from ${packet.size} bytes ==="
+                )
+            }
+        }
+    }
+
+    private fun decodeAndDisplayDirectFrame(frameData: ByteArray, options: BitmapFactory.Options) {
+        try {
+            val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size, options)
+            if (bitmap != null) {
+                if (DEBUG) {
+                    decodeAndLogExif(frameData)
+                }
+                drawToSurfaceOptimized(bitmap)
+                listener?.onFrameDecoded(bitmap.width, bitmap.height)
+                bitmap.recycle()
+            } else {
+                Log.w(TAG, "Failed to decode direct frame bitmap")
+                // Debug: Erste Bytes loggen
+                if (frameData.size >= 8 && DEBUG) {
+                    Log.d(TAG, "Direct frame start: ${frameData.sliceArray(0..7).joinToString(" ") { "%02X".format(it) }}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Direct frame decode error: ${e.message}")
+        }
+    }
+
+    private fun updateFps() {
+        val currentTime = System.currentTimeMillis()
+        if (lastFrameTime > 0) {
+            val frameTime = currentTime - lastFrameTime
+            if (frameTime > 0) {
+                fps = ((1000 / frameTime).coerceAtMost(60)).toInt()
+            }
+        }
+        lastFrameTime = currentTime
+    }
+
+    private fun drawToSurfaceOptimized(bitmap: Bitmap) {
+        var canvas: Canvas? = null
+        try {
+            canvas = surfaceHolder?.lockCanvas()
+            canvas?.let {
+                it.drawColor(Color.BLACK)
+
+                val displayBitmap = if (needsScaling(bitmap, it.width, it.height)) {
+                    scaleToSurface(bitmap, it.width, it.height)
+                } else {
+                    bitmap
+                }
+
+                val x = (it.width - displayBitmap.width) / 2f
+                val y = (it.height - displayBitmap.height) / 2f
+                it.drawBitmap(displayBitmap, x, y, paint)
+
+                // FPS und Modus anzeigen
+                if (DEBUG) {
+                    drawStatusInfo(it)
+                }
+
+                if (displayBitmap != bitmap) {
+                    displayBitmap.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Surface draw error: ${e.message}")
+        } finally {
+            canvas?.let {
+                try {
+                    surfaceHolder?.unlockCanvasAndPost(it)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun drawStatusInfo(canvas: Canvas) {
+        val statusPaint = Paint().apply {
+            color = Color.WHITE
+            textSize = 30f
+            isAntiAlias = true
+        }
+
+        val queueSize = packetQueue.size
+        val dropRate = if (framesProcessed + framesSkipped > 0) {
+            (framesSkipped.toDouble() / (framesProcessed + framesSkipped) * 100)
+        } else 0.0
+
+        canvas.drawText("FPS: $fps", 20f, 50f, statusPaint)
+        canvas.drawText("Frames: $framesReceived", 20f, 90f, statusPaint)
+        canvas.drawText("Mode: $currentStreamMode", 20f, 130f, statusPaint)
+        canvas.drawText("Queue: $queueSize/100", 20f, 170f, statusPaint)
+        canvas.drawText("Dropped: ${"%.1f".format(dropRate)}%", 20f, 210f, statusPaint)
+    }
+
+    private fun startRtpFrameProcessor() {
+        Thread {
+            Log.d(TAG, "RTP Frame Processor started")
+
+            val options = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inMutable = true
+                inSampleSize = 1
+                inJustDecodeBounds = false
+            }
+
+            while (isReceiving.get()) {
+                try {
+                    val packet = packetQueue.poll(100, TimeUnit.MILLISECONDS)
+                    if (packet != null) {
+                        processRtpPacket(packet, options)
+                    }
+
+                    if (framesProcessed % 60 == 0) {
+                        logPerformanceStats()
+                    }
+
+                } catch (e: InterruptedException) {
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "RTP frame processing error: ${e.message}")
+                }
+            }
+
+            Log.d(TAG, "RTP Frame Processor stopped")
+        }.start()
+    }
+
+    private fun processRtpPacket(packet: ByteArray, options: BitmapFactory.Options) {
+        // NEU: Prüfe auf kombinierte Pakete für RTP
+        val isCombinedPacket = packet.size > 1500
+        var processed = 0
+        var framesInPacket = 0
+
+        if (isCombinedPacket) {
+            Log.d(TAG, "RTP Combined packet detected: ${packet.size} bytes")
+        }
+
+        // NEU: Loop für multiple RTP-Frames
+        while (processed < packet.size) {
+            if (processed + PROTO_HEADER_SIZE > packet.size) {
+                break
+            }
+
+            // Versuche Fragment zu verarbeiten
+            val remainingData = packet.copyOfRange(processed, packet.size)
+            val frameData = frameAssembler.processPacket(remainingData)
+
+            if (frameData != null) {
+                framesInPacket++
+
+                // Frame-Rate Limiting
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - lastFrameTime < targetFrameTime) {
+                    processed += PROTO_HEADER_SIZE + getPayloadSize(remainingData)
+                    continue
+                }
+                lastFrameTime = currentTime
+
+                framesProcessed++
+                framesReceived++
+                decodeAndDisplayFrame(frameData, options)
+                updateFps()
+
+                // Zur nächsten Position springen (approximativ)
+                processed += PROTO_HEADER_SIZE + getPayloadSize(remainingData)
+            } else {
+                // Kein kompletter Frame gefunden - break
+                break
+            }
+        }
+
+        if (isCombinedPacket && framesInPacket > 1) {
+            Log.i(TAG, "RTP Combined: $framesInPacket frames in one packet")
+        }
+    }
+
+    // NEUE HILFSFUNKTION: Payload-Größe aus Packet ermitteln
+    private fun getPayloadSize(packet: ByteArray): Int {
+        return if (packet.size >= 4) {
+            (packet[2].toInt() and 0xFF) or ((packet[3].toInt() and 0xFF) shl 8)
+        } else {
+            0
         }
     }
 
@@ -438,41 +818,6 @@ class JFIFMJpegStreamReceiver {
         }
     }
 
-    private fun drawToSurfaceOptimized(bitmap: Bitmap) {
-        var canvas: Canvas? = null
-        try {
-            canvas = surfaceHolder?.lockCanvas()
-            canvas?.let {
-                it.drawColor(Color.BLACK)
-
-                // Skalierung nur wenn nötig
-                val displayBitmap = if (needsScaling(bitmap, it.width, it.height)) {
-                    scaleToSurface(bitmap, it.width, it.height)
-                } else {
-                    bitmap
-                }
-
-                val x = (it.width - displayBitmap.width) / 2f
-                val y = (it.height - displayBitmap.height) / 2f
-                it.drawBitmap(displayBitmap, x, y, paint)
-
-                // Nur recyceln wenn wir skaliert haben
-                if (displayBitmap != bitmap) {
-                    displayBitmap.recycle()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Surface draw error: ${e.message}")
-        } finally {
-            canvas?.let {
-                try {
-                    surfaceHolder?.unlockCanvasAndPost(it)
-                } catch (_: Exception) {
-                }
-            }
-        }
-    }
-
     private fun needsScaling(bitmap: Bitmap, surfaceWidth: Int, surfaceHeight: Int): Boolean {
         return bitmap.width > surfaceWidth || bitmap.height > surfaceHeight
     }
@@ -501,10 +846,11 @@ class JFIFMJpegStreamReceiver {
             (framesSkipped.toDouble() / (framesProcessed + framesSkipped) * 100)
         } else 0.0
 
-        val stats = "FPS: ${1000/(System.currentTimeMillis() - lastFrameTime + 1)} | " +
-                "Frames: $framesProcessed | " +
+        val stats = "FPS: $fps | " +
+                "Frames: $framesReceived | " +
                 "Skipped: $framesSkipped (${"%.1f".format(dropRate)}%) | " +
-                "Queue: $queueSize/100"
+                "Queue: $queueSize/100 | " +
+                "Mode: $currentStreamMode"
 
         Log.d(TAG, stats)
         listener?.onStreamInfo(stats)
@@ -525,6 +871,12 @@ class JFIFMJpegStreamReceiver {
         Log.d(TAG, "Receiver released")
     }
 
+    private class DirectFrameAssembler {
+        // Kann erweitert werden für komplexere Frame-Zusammensetzung
+        fun isFrameComplete(currentSize: Int, expectedSize: Int): Boolean {
+            return currentSize >= expectedSize && expectedSize > 0
+        }
+    }
     // ------------------- Optimized Frame Assembler -------------------
     class RTPFrameAssembler {
 

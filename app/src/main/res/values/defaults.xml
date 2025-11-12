@@ -3,11 +3,14 @@
     <integer name="udpport">2224</integer>
     <integer name="timeout">5000</integer>
     <string name="cameraip">192.168.1.1</string>
-    <bool name="usehd">false</bool>
+    <string name="defaultquality">720p</string>
+    <bool name="default_parkinglines">true</bool>
 
     <integer name="sd_width">640</integer>
     <integer name="sd_height">480</integer>
-    <integer name="hd_width">1920</integer>
-    <integer name="hd_height">1080</integer>
+    <integer name="hd_width">1280</integer>
+    <integer name="hd_height">720</integer>
+    <integer name="fhd_width">1920</integer>
+    <integer name="fhd_height">1080</integer>
     <integer name="frames">25</integer>
 </resources>

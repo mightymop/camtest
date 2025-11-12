@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "local.test.camtest"
+    namespace = "de.mopsdom.rearview"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "local.test.camtest"
+        applicationId = "de.mopsdom.rearview"
         minSdk = 35
         targetSdk = 36
         versionCode = 1
@@ -57,8 +57,6 @@ android {
 }
 
 dependencies {
-    implementation(libs.libvlc)
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -67,6 +65,5 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.navigation.fragment.ktx)
     implementation(libs.androidx.navigation.ui.ktx)
-
-
+    implementation(libs.androidx.preference.ktx)
 }

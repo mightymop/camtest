@@ -1,4 +1,4 @@
-package local.test.camtest.protocol
+package de.mopsdom.rearview.protocol
 
 enum class CTPCommand(val command: String) {
     CTP("CTP"),

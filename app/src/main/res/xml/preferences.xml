@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <ListPreference
+        android:key="pref_wifi_network"
+        android:title="@string/camera_wifi_sum"
+        android:dialogTitle="@string/camera_wifi_title"
+        android:defaultValue="" />
+
+    <CheckBoxPreference
+        android:key="pref_parking_lines"
+        android:title="@string/camera_lines_title"
+        android:summary="@string/camera_lines_sum"
+        android:defaultValue="@bool/default_parkinglines" />
+
+    <ListPreference
+        android:entries="@array/qualities"
+        android:entryValues="@array/qualities"
+        android:key="pref_quality"
+        android:title="@string/camera_quality_title"
+        android:summary="@string/camera_quality_sum"
+        android:defaultValue="@string/defaultquality" />
+
+</PreferenceScreen>

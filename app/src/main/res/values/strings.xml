@@ -9,4 +9,15 @@
 
     <string name="menu_home">Home</string>
 
+    <string name="camera_wifi_sum">WLAN auswählen</string>
+    <string name="camera_wifi_title">WLAN Netzwerk der Kamera auswählen</string>
+
+    <string name="camera_lines_sum">Hilfslinien</string>
+    <string name="camera_lines_title">Zeigt Hilfslinien als Overlay im Bild an</string>
+
+    <string name="preferences">Einstellungen</string>
+
+    <string name="camera_quality_title">Bildqualität</string>
+    <string name="camera_quality_sum">FHD=1980x1080  HD=1280x720  SD=640x480</string>
+
 </resources>
