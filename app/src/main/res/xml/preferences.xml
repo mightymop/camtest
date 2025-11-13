@@ -4,15 +4,9 @@
 
     <ListPreference
         android:key="pref_wifi_network"
-        android:title="@string/camera_wifi_sum"
-        android:dialogTitle="@string/camera_wifi_title"
+        android:title="@string/camera_wifi_title"
+        android:dialogTitle="@string/camera_wifi_sum"
         android:defaultValue="" />
-
-    <CheckBoxPreference
-        android:key="pref_parking_lines"
-        android:title="@string/camera_lines_title"
-        android:summary="@string/camera_lines_sum"
-        android:defaultValue="@bool/default_parkinglines" />
 
     <ListPreference
         android:entries="@array/qualities"
@@ -21,5 +15,56 @@
         android:title="@string/camera_quality_title"
         android:summary="@string/camera_quality_sum"
         android:defaultValue="@string/defaultquality" />
+
+    <CheckBoxPreference
+        android:key="pref_parking_lines"
+        android:title="@string/camera_lines_title"
+        android:summary="@string/camera_lines_sum"
+        android:defaultValue="@bool/default_parkinglines" />
+
+        <PreferenceCategory android:title="@string/camera_lines_title_portrait">
+            <SeekBarPreference
+                android:title="Top"
+                android:max="500"
+                android:min="100"
+                android:key="parking_lines_portrait_top"/>
+            <SeekBarPreference
+                android:title="Right"
+                android:max="100"
+                android:min="0"
+                android:key="parking_lines_portrait_right"/>
+            <SeekBarPreference
+                android:title="Bottom"
+                android:max="500"
+                android:min="100"
+                android:key="parking_lines_portrait_bottom"/>
+            <SeekBarPreference
+                android:title="Left"
+                android:max="100"
+                android:min="0"
+                android:key="parking_lines_portrait_left"/>
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/camera_lines_title_landscape">
+            <SeekBarPreference
+                android:title="Top"
+                android:max="500"
+                android:min="100"
+                android:key="parking_lines_landscape_top"/>
+            <SeekBarPreference
+                android:title="Right"
+                android:max="100"
+                android:min="0"
+                android:key="parking_lines_landscape_right"/>
+            <SeekBarPreference
+                android:title="Bottom"
+                android:max="100"
+                android:min="0"
+                android:key="parking_lines_landscape_bottom"/>
+            <SeekBarPreference
+                android:title="Left"
+                android:max="100"
+                android:min="0"
+                android:key="parking_lines_landscape_left"/>
+        </PreferenceCategory>
 
 </PreferenceScreen>

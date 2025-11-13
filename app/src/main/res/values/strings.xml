@@ -1,23 +1,20 @@
 <resources>
-    <string name="app_name">Camtest</string>
-    <string name="navigation_drawer_open">Open navigation drawer</string>
-    <string name="navigation_drawer_close">Close navigation drawer</string>
-    <string name="nav_header_title">Android Studio</string>
-    <string name="nav_header_subtitle">android.studio@android.com</string>
-    <string name="nav_header_desc">Navigation header</string>
-    <string name="action_settings">Settings</string>
+    <string name="app_name">RearView</string>
 
-    <string name="menu_home">Home</string>
+    <string name="camera_wifi_title">WLAN auswählen</string>
+    <string name="camera_wifi_sum">WLAN Netzwerk der Kamera auswählen</string>
 
-    <string name="camera_wifi_sum">WLAN auswählen</string>
-    <string name="camera_wifi_title">WLAN Netzwerk der Kamera auswählen</string>
+    <string name="camera_lines_title">Parkhilfslinien</string>
+    <string name="camera_lines_sum">Zeigt Hilfslinien als Overlay im Bild an</string>
 
-    <string name="camera_lines_sum">Hilfslinien</string>
-    <string name="camera_lines_title">Zeigt Hilfslinien als Overlay im Bild an</string>
+    <string name="camera_lines_title_portrait">Parkhilfslinien - Hochformat</string>
+    <string name="camera_lines_title_landscape">Parkhilfslinien - Querformat</string>
 
     <string name="preferences">Einstellungen</string>
 
     <string name="camera_quality_title">Bildqualität</string>
     <string name="camera_quality_sum">FHD=1980x1080  HD=1280x720  SD=640x480</string>
 
+    <string name="alert_wifi">Bitte in den Einstellungen das WLAN der Kamera auswählen!</string>
+    <string name="alert_wifi_connection">Keine Verbindung zum Kamera-WLAN!</string>
 </resources>

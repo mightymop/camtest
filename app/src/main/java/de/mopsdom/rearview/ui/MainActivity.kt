@@ -1,11 +1,19 @@
 package de.mopsdom.rearview.ui
 
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiNetworkSpecifier
 import android.os.Bundle
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -18,7 +26,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.prefs.Preferences
 
 class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
@@ -106,16 +113,188 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         })
 
         mjpegReceiver = JFIFMJpegStreamReceiver()
+
+
+    }
+
+    fun refreshLineMargins() {
+        val orientation = resources.configuration.orientation
+        when (orientation) {
+            Configuration.ORIENTATION_PORTRAIT -> {
+
+                var layoutParams =
+                    findViewById<ImageView>(R.id.parking_lines).layoutParams as ViewGroup.MarginLayoutParams
+                var topDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_portrait_top",
+                    -1
+                ).toString()
+
+                if (topDp=="-1")
+                {
+                    topDp = resources.getString(R.string.portrait_line_coords_top)
+                }
+
+
+                var rightDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_portrait_right",
+                    -1
+                ).toString()
+
+                if (rightDp=="-1")
+                {
+                    rightDp = resources.getString(R.string.portrait_line_coords_right)
+                }
+
+
+                var bottomDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_portrait_bottom",
+                    -1
+                ).toString()
+                if (bottomDp=="-1")
+                {
+                    bottomDp = resources.getString(R.string.portrait_line_coords_bottom)
+                }
+
+
+                var leftDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_portrait_left",
+                    -1
+                ).toString()
+                if (leftDp=="-1")
+                {
+                    leftDp = resources.getString(R.string.portrait_line_coords_left)
+                }
+
+                layoutParams.setMargins(
+                    (leftDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt(),
+                    (topDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt(),
+                    (rightDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt(),
+                    (bottomDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt()
+                )
+
+                findViewById<ImageView>(R.id.parking_lines).layoutParams = layoutParams
+            }
+
+            Configuration.ORIENTATION_LANDSCAPE -> {
+                var layoutParams =
+                    findViewById<ImageView>(R.id.parking_lines).layoutParams as ViewGroup.MarginLayoutParams
+                var topDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_landscape_top",
+                    -1
+                ).toString()
+
+                if (topDp=="-1")
+                {
+                    topDp = resources.getString(R.string.landscape_line_coords_top)
+                }
+
+
+                var rightDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_landscape_right",
+                    -1
+                ).toString()
+
+                if (rightDp=="-1")
+                {
+                    rightDp = resources.getString(R.string.landscape_line_coords_right)
+                }
+
+
+                var bottomDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_landscape_bottom",
+                    -1
+                ).toString()
+                if (bottomDp=="-1")
+                {
+                    bottomDp = resources.getString(R.string.landscape_line_coords_bottom)
+                }
+
+
+                var leftDp = PreferenceManager.getDefaultSharedPreferences(this).getInt(
+                    "parking_lines_landscape_left",
+                    -1
+                ).toString()
+                if (leftDp=="-1")
+                {
+                    leftDp = resources.getString(R.string.landscape_line_coords_left)
+                }
+
+                layoutParams.setMargins(
+                    (leftDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt(),
+                    (topDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt(),
+                    (rightDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt(),
+                    (bottomDp!!.replace("[^0-9]".toRegex(), "")
+                        .toInt() * resources.displayMetrics.density).toInt()
+                )
+
+                findViewById<ImageView>(R.id.parking_lines).layoutParams = layoutParams
+            }
+
+            else -> {
+                Log.d("Orientation", "Undefined Orientation")
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
 
-        CoroutineScope(Dispatchers.IO).launch {
-            disconnect()
-            delay(500)
-            connect()
+        refreshLineMargins()
+
+        findViewById<ImageView>(R.id.parking_lines).visibility= View.GONE
+
+        var wifi = PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wifi_network",null)
+
+        if (wifi!=null) {
+            if (!networkUtils.isConnectedToWifiContaining(wifi)) {
+                connectToWifi(wifi)
+            }
+            else
+            {
+                CoroutineScope(Dispatchers.IO).launch {
+                    disconnect()
+                    delay(500)
+                    connect()
+                }
+            }
         }
+        else
+        {
+            Toast.makeText(this,R.string.alert_wifi,Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun connectToWifi(ssid: String) {
+        var self = this
+        val specifier = WifiNetworkSpecifier.Builder()
+            .setSsid(ssid)
+            .apply {
+            }
+            .build()
+
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .setNetworkSpecifier(specifier)
+            .build()
+
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        connectivityManager.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                Toast.makeText(self,R.string.alert_wifi_connection,Toast.LENGTH_LONG).show()
+                connectivityManager.bindProcessToNetwork(network)
+            }
+
+            override fun onUnavailable() {
+                Toast.makeText(self,R.string.alert_wifi_connection,Toast.LENGTH_LONG).show()
+            }
+        })
     }
 
     override fun surfaceChanged(

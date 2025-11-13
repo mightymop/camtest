@@ -42,8 +42,6 @@
         android:layout_height="wrap_content"
         android:layout_gravity="top"
         android:background="@drawable/lines"
-        android:layout_marginTop="250dp"
-        android:layout_marginBottom="300dp"
-        app:tint="@android:color/white"></ImageView>
+        ></ImageView>
 
 </FrameLayout>

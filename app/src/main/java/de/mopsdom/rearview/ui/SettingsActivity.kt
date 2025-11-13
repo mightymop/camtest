@@ -5,11 +5,14 @@ import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
+import androidx.preference.SeekBarPreference
 import de.mopsdom.rearview.R
 
 class SettingsActivity : AppCompatActivity() {
@@ -59,6 +62,69 @@ class SettingsActivity : AppCompatActivity() {
 
             setupPreferenceListeners()
 
+            initSeekbars()
+
+        }
+
+        fun initSeekbars() {
+
+            var topDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_portrait_top",
+                resources.getString(R.string.portrait_line_coords_top)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            var rightDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_portrait_right",
+                resources.getString(R.string.portrait_line_coords_right)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            var bottomDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_portrait_bottom",
+                resources.getString(R.string.portrait_line_coords_bottom)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            var leftDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_portrait_left",
+                resources.getString(R.string.portrait_line_coords_left)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            findPreference<SeekBarPreference>("parking_lines_portrait_top")!!.setValue(topDp)
+            findPreference<SeekBarPreference>("parking_lines_portrait_right")!!.setValue(rightDp)
+            findPreference<SeekBarPreference>("parking_lines_portrait_bottom")!!.setValue(bottomDp)
+            findPreference<SeekBarPreference>("parking_lines_portrait_left")!!.setValue(leftDp)
+
+            var ltopDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_landscape_top",
+                resources.getString(R.string.landscape_line_coords_top)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            var lrightDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_landscape_right",
+                resources.getString(R.string.landscape_line_coords_right)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            var lbottomDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_landscape_bottom",
+                resources.getString(R.string.landscape_line_coords_bottom)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            var lleftDp = PreferenceManager.getDefaultSharedPreferences(requireContext()).getInt(
+                "parking_lines_landscape_left",
+                resources.getString(R.string.landscape_line_coords_left)
+                    .replace("[^0-9]".toRegex(), "").toInt()
+            )
+
+            findPreference<SeekBarPreference>("parking_lines_landscape_top")!!.setValue(ltopDp)
+            findPreference<SeekBarPreference>("parking_lines_landscape_right")!!.setValue(lrightDp)
+            findPreference<SeekBarPreference>("parking_lines_landscape_bottom")!!.setValue(lbottomDp)
+            findPreference<SeekBarPreference>("parking_lines_landscape_left")!!.setValue(lleftDp)
         }
 
         override fun onResume() {

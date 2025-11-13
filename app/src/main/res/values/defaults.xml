@@ -13,4 +13,14 @@
     <integer name="fhd_width">1920</integer>
     <integer name="fhd_height">1080</integer>
     <integer name="frames">25</integer>
+
+    <string name="portrait_line_coords_top">375dp</string>
+    <string name="portrait_line_coords_right">0dp</string>
+    <string name="portrait_line_coords_bottom">300dp</string>
+    <string name="portrait_line_coords_left">0dp</string>
+
+    <string name="landscape_line_coords_top">150dp</string>
+    <string name="landscape_line_coords_right">60dp</string>
+    <string name="landscape_line_coords_bottom">10dp</string>
+    <string name="landscape_line_coords_left">60dp</string>
 </resources>
