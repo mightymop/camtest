@@ -16,5 +16,9 @@
     <string name="camera_quality_sum">FHD=1980x1080  HD=1280x720  SD=640x480</string>
 
     <string name="alert_wifi">Bitte in den Einstellungen das WLAN der Kamera auswählen!</string>
-    <string name="alert_wifi_connection">Keine Verbindung zum Kamera-WLAN!</string>
+    <string name="alert_wifi_connection">Keine Verbindung zum Kamera-WLAN</string>
+    <string name="wifi_ok">Erfolgreicher Verbindungsversuch zum Kamera-WLAN</string>
+    <string name="wifi_not_found">Kamera-WLAN wurde nicht gefunden</string>
+    <string name="auto_connect_wifi_title">WLAN-Automatik</string>
+    <string name="auto_connect_wifi_sum">Automatisch beim App-Start zum Kamera-WLAN verbinden</string>
 </resources>

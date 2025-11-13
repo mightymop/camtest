@@ -17,6 +17,12 @@
         android:defaultValue="@string/defaultquality" />
 
     <CheckBoxPreference
+        android:key="pref_autoconnect_wifi"
+        android:title="@string/auto_connect_wifi_title"
+        android:summary="@string/auto_connect_wifi_sum"
+        android:defaultValue="@bool/default_autoconnect_wifi" />
+
+    <CheckBoxPreference
         android:key="pref_parking_lines"
         android:title="@string/camera_lines_title"
         android:summary="@string/camera_lines_sum"

@@ -20,7 +20,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.PreferenceManager
 import de.mopsdom.rearview.R
 import de.mopsdom.rearview.protocol.CTPProtocol
-import de.mopsdom.rearview.protocol.JFIFMJpegStreamReceiver
+import de.mopsdom.rearview.protocol.RtpConvertProxy
 import de.mopsdom.rearview.utils.NetworkUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,9 +34,11 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var commandstream : CTPProtocol
 
     private lateinit var networkUtils: NetworkUtils
-    private lateinit var mjpegReceiver: JFIFMJpegStreamReceiver
+    private lateinit var mjpegReceiver: RtpConvertProxy
 
     private var use_cam: Boolean = true
+
+    private var trywificonnection = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,10 +99,10 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 Log.i(TAG, info)
             }
 
-            override fun onCameraConnected(connected: Boolean, use_hd: Boolean) {
+            override fun onCameraConnected(connected: Boolean) {
                 if (connected) {
                     mjpegReceiver.stopStream()
-                    mjpegReceiver.startStream(false)
+                    mjpegReceiver.startStream(resources.getInteger(R.integer.udpport))
                 } else {
                     mjpegReceiver.stopStream()
                 }
@@ -112,10 +114,21 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         })
 
-        mjpegReceiver = JFIFMJpegStreamReceiver()
-
+        mjpegReceiver = RtpConvertProxy()
 
     }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        CoroutineScope(Dispatchers.IO).launch {
+            disconnect()
+            delay(3000)
+            connect()
+        }
+
+        refreshLineMargins()
+    }
+
 
     fun refreshLineMargins() {
         val orientation = resources.configuration.orientation
@@ -250,29 +263,55 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         findViewById<ImageView>(R.id.parking_lines).visibility= View.GONE
 
-        var wifi = PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wifi_network",null)
+        var autoWifi = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("pref_autoconnect_wifi",resources.getBoolean(R.bool.default_autoconnect_wifi))
 
-        if (wifi!=null) {
-            if (!networkUtils.isConnectedToWifiContaining(wifi)) {
-                connectToWifi(wifi)
-            }
-            else
-            {
-                CoroutineScope(Dispatchers.IO).launch {
-                    disconnect()
-                    delay(500)
-                    connect()
+        if (autoWifi) {
+            var wifi = PreferenceManager.getDefaultSharedPreferences(this)
+                .getString("pref_wifi_network", null)
+
+            if (wifi != null) {
+                Log.d(TAG, "Found Wifi in preferences: ${wifi}")
+
+                if (!networkUtils.isConnectedToWifiContaining(wifi)) {
+                    Log.d(TAG, "Try to connect to: ${wifi}")
+                    if (!trywificonnection) {
+                        trywificonnection = true
+                        connectToWifi(wifi)
+                    } else {
+                        trywificonnection = false
+                        Log.d(TAG, "Verbindung zu ${wifi} nicht möglich.")
+                        Toast.makeText(
+                            this,
+                            resources.getString(R.string.alert_wifi_connection),
+                            Toast.LENGTH_LONG
+                        ).show()
+                        finish()
+                    }
+                } else {
+                    trywificonnection = false
+                    Log.d(TAG, "Allready connected to: ${wifi}")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        disconnect()
+                        delay(500)
+                        connect()
+                    }
                 }
+            } else {
+                Toast.makeText(this, R.string.alert_wifi, Toast.LENGTH_LONG).show()
             }
         }
-        else
-        {
-            Toast.makeText(this,R.string.alert_wifi,Toast.LENGTH_LONG).show()
+        else{
+            CoroutineScope(Dispatchers.IO).launch {
+                disconnect()
+                delay(500)
+                connect()
+            }
         }
     }
 
     fun connectToWifi(ssid: String) {
         var self = this
+        Log.d(TAG, "Build WIFI-Request")
         val specifier = WifiNetworkSpecifier.Builder()
             .setSsid(ssid)
             .apply {
@@ -287,11 +326,13 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         connectivityManager.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                Log.d(TAG, resources.getString(R.string.wifi_ok))
                 Toast.makeText(self,R.string.alert_wifi_connection,Toast.LENGTH_LONG).show()
                 connectivityManager.bindProcessToNetwork(network)
             }
 
             override fun onUnavailable() {
+                Log.d(TAG, resources.getString(R.string.wifi_not_found))
                 Toast.makeText(self,R.string.alert_wifi_connection,Toast.LENGTH_LONG).show()
             }
         })
@@ -308,51 +349,16 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         Log.d(TAG,"Surface created - initializing RTP decoder")
-        mjpegReceiver.initialize(holder, object : JFIFMJpegStreamReceiver.StreamListener {
-            override fun onVideoStarted() {
-                Log.d(TAG,"JFIF MJPEG stream started")
-            }
-
-            override fun onVideoStopped() {
-                Log.d(TAG,"Stream Stopped")
-            }
-
-            override fun onError(error: String) {
-                Log.e(TAG,"Error: $error")
-            }
-
-            override fun onFrameDecoded(width: Int, height: Int) {
-                Log.v(TAG,"Frame decoded successfully")
-            }
-
-            override fun onStreamInfo(info: String) {
-                Log.v(TAG,info)
-            }
-
-            override fun onPcapDumpStarted(filePath: String) {
-
-            }
-
-            override fun onPcapDumpStopped(filePath: String, packetCount: Int) {
-
-            }
-        },this)
-
+        mjpegReceiver.setSurface(findViewById<SurfaceView>(R.id.surfaceView))
     }
 
     override fun surfaceDestroyed(p0: SurfaceHolder) {
 
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        mjpegReceiver.release()
-    }
-
     override fun onPause() {
         super.onPause()
         disconnect()
-     //   networkUtils.stopMonitoring()
     }
     fun connect() {
         CoroutineScope(Dispatchers.IO).launch {

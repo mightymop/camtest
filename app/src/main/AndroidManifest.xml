@@ -23,7 +23,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
-            android:configChanges="orientation"
+            android:configChanges="orientation|screenSize|keyboardHidden"
 
             android:label="@string/app_name"
             android:theme="@style/Theme.Camtest.NoActionBar">

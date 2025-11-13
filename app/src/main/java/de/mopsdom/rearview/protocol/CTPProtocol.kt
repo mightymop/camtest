@@ -29,7 +29,7 @@ class CTPProtocol(
     interface CommandStreamListener {
         fun onConnected()
         fun onDisconnected()
-        fun onCameraConnected(connected: Boolean, use_hd: Boolean)
+        fun onCameraConnected(connected: Boolean)
         fun onCommandSent(info: String)
         fun onError(error: String, e: Exception?)
     }
@@ -165,9 +165,9 @@ class CTPProtocol(
             val param = json.getJSONObject("param")
 
             if (topic == CTPCommand.OPEN_RT_STREAM.command && op == "NOTIFY") {
-                listener.onCameraConnected(true,param.getInt("h")==1920 && param.getInt("w")==1080)
+                listener.onCameraConnected(true)
             } else if (topic == CTPCommand.CLOSE_RT_STREAM.command && op == "NOTIFY") {
-                listener.onCameraConnected(false,param.getInt("h")==1920 && param.getInt("w")==1080)
+                listener.onCameraConnected(false)
                 running = false
             }
         } catch (e: Exception) {

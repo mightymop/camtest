@@ -5,6 +5,7 @@
     <string name="cameraip">192.168.1.1</string>
     <string name="defaultquality">720p</string>
     <bool name="default_parkinglines">true</bool>
+    <bool name="default_autoconnect_wifi">false</bool>
 
     <integer name="sd_width">640</integer>
     <integer name="sd_height">480</integer>
@@ -16,11 +17,11 @@
 
     <string name="portrait_line_coords_top">375dp</string>
     <string name="portrait_line_coords_right">0dp</string>
-    <string name="portrait_line_coords_bottom">300dp</string>
+    <string name="portrait_line_coords_bottom">320dp</string>
     <string name="portrait_line_coords_left">0dp</string>
 
     <string name="landscape_line_coords_top">150dp</string>
-    <string name="landscape_line_coords_right">60dp</string>
-    <string name="landscape_line_coords_bottom">10dp</string>
-    <string name="landscape_line_coords_left">60dp</string>
+    <string name="landscape_line_coords_right">0dp</string>
+    <string name="landscape_line_coords_bottom">20dp</string>
+    <string name="landscape_line_coords_left">0dp</string>
 </resources>
