@@ -1,6 +1,7 @@
 package de.mopsdom.rearview.protocol
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.util.Log
 import androidx.preference.PreferenceManager
 import de.mopsdom.rearview.R
@@ -12,13 +13,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Locale
 import kotlin.concurrent.thread
 
 class CTPProtocol(
@@ -52,11 +57,76 @@ class CTPProtocol(
         private const val MAX_PAYLOAD_SIZE = 5 * 1024 * 1024
     }
 
+    private fun fetchDevDescription(): JSONObject {
+        val gateway = getGatewayIp()
+            ?: throw Exception("Gateway konnte nicht ermittelt werden – WLAN tot oder App im Halbschlaf?")
+
+        val url = "http://$gateway:8080/mnt/spiflash/res/dev_desc.txt"
+        Log.i(TAG, "Hole Device Description: $url")
+
+        val conn = (java.net.URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 3000
+            readTimeout = 3000
+            requestMethod = "GET"
+        }
+
+        val code = conn.responseCode
+        if (code != 200) {
+            throw Exception("HTTP $code – das Ding will wohl nicht reden.")
+        }
+
+        val text = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+        val json = JSONObject(text)
+
+        return json
+    }
+
+    private fun validateDevice(json: JSONObject) {
+
+        val productType = json.optString("product_type", "")
+        val matchAppType = json.optString("match_app_type", "")
+
+
+        val startsCorrect = productType.startsWith("AC52", ignoreCase = true) ||
+                            productType.startsWith("AC54", ignoreCase = true) ||
+                            productType.startsWith("AC79", ignoreCase = true)
+
+        val appCorrect = matchAppType == "DVRunning 2"
+
+        if (!startsCorrect) {
+            throw Exception("Falscher Gerätetyp: ${productType} – erwarte AC52* oder AC54*.")
+        }
+
+        if (!appCorrect) {
+            throw Exception("match_app_type ist ${matchAppType}, muss aber 'DVRunning 2' sein.")
+        }
+
+        Log.i(TAG, "Device OK: product_type=${productType}, match_app_type=${matchAppType}")
+    }
+
+    // ------------------------------------------------------------
+    // Hilfsfunktionen
+    // ------------------------------------------------------------
+
+    private fun getGatewayIp(): String? {
+        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val dhcp = wm.dhcpInfo ?: return null
+        val gateway = dhcp.gateway
+        return if (gateway == 0) null else intToIp(gateway)
+    }
+
+    private fun intToIp(i: Int): String =
+        "${i and 0xFF}.${i shr 8 and 0xFF}.${i shr 16 and 0xFF}.${i shr 24 and 0xFF}"
+
+
     // ======================== CONNECT ==============================
     fun connect() {
         if (connected) return
         ioScope.launch {
             try {
+                val devDesc = fetchDevDescription()
+                validateDevice(devDesc)
+
                 val ip = context.getString(R.string.cameraip)
                 val port = context.resources.getInteger(R.integer.tcpport)
                 val timeout = context.resources.getInteger(R.integer.timeout)

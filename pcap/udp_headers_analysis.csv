@@ -1,1 +1,0 @@
-PacketNumber,TotalSize,MagicByte,StreamID,SequenceNum,FragmentType,unknown 6 bytes,HasJPEG,PayloadStart
